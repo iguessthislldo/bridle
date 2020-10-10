@@ -1,0 +1,107 @@
+#include "another_file.idl"
+
+#pragma fake \
+    fake
+
+const string annostr = "@topic";
+
+#include "another_file.idl"
+
+@name
+@name(2)
+@name(x=2)
+@name(x=2, y=3)
+@scoped::name
+@::scoped::name
+@scoped::name(2)
+@::scoped::name(2)
+struct @before_struct_name AnnotatedStruct @after_struct_name {
+    @::scoped::name(x=2, y=3)
+    @name
+    short @before_field_name value @after_field_name;
+};
+
+@topic
+struct NoModuleType {
+  short value;
+};
+
+module XModule {
+  struct XTypeA {
+    short value;
+  };
+
+  module YModule {
+    struct YTypeA {
+      XTypeA value;
+    };
+
+    module ZModule {
+      struct ZTypeA {
+        YTypeA value;
+      };
+
+      enum EnumType {
+        A,
+/* Try to force the preproccesor to put in a line statment.
+ *
+ *
+ *
+ *
+ *
+ *
+ *
+ * Yes, it has to be this long.
+ */
+        B,
+        C
+      };
+
+      struct ZTypeB {
+        ZTypeA value;
+      };
+    };
+
+    struct YTypeB {
+      ZModule::ZTypeA value;
+    };
+  };
+
+  const short short_const = 30;
+
+  typedef string<16> bounded_s8_t;
+  typedef wstring<16> bounded_s16_t;
+
+  typedef long i32_array_t[4];
+  typedef sequence<long> i32_unbounded_seq_t;
+  typedef sequence<long, 4> i32_bounded_seq_t;
+
+  struct XTypeB {
+    NoModuleType no_module;
+    AnotherFileNoModuleType another_file_no_module;
+    AnotherFileSameModuleType another_file_same_module;
+
+    YModule::YTypeB value;
+
+    boolean bool_value;
+    octet octet_value;
+    unsigned short u16_value;
+    short i16_value;
+    unsigned long u32_value;
+    long i32_value;
+    YModule::ZModule::EnumType enum_value;
+    char c8_value;
+    wchar c16_value;
+    string s8_value;
+    wstring s16_value;
+    bounded_s8_t bounded_s8_value;
+    bounded_s16_t bounded_s16_value;
+    float f32_value;
+    double f64_value;
+    long double f128_value;
+
+    i32_array_t i32_array;
+    i32_unbounded_seq_t i32_unbounded_seq;
+    i32_bounded_seq_t i32_bounded_seq;
+  };
+};

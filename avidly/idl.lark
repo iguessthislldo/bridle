@@ -1,0 +1,352 @@
+// Supported IDL 4.2 Syntax:
+// 7.4.1 "Building Block Core Data Types"
+// 7.4.2 "Building Block Any"
+// 7.4.14 "Building Block Anonymous Types"
+// 7.4.15 "Building Block Annotations"
+// TODO: Reevaluate
+// 7.4.3 "Building Block Interfaces - Basic"
+// 7.4.4 "Building Block Interfaces - Full"
+// 7.4.5 "Building Block Value Types"
+// 7.4.6 "Building Block CORBA-Specific – Interfaces"
+// 7.4.7 "Building Block CORBA-Specific – Value Types"
+// TODO: Add
+// 7.4.13 "Building Block Extended Data-Types"
+
+
+// Basic Tokens ---------------------------------------------------------------
+
+%import common.WS
+%ignore WS
+
+_identifier: /[^\W\d]\w*/
+
+octal_literal: /0[0-7]*/
+decimal_literal: /[1-9][0-9]*/
+hexadecimal_literal: /0[xX][0-9A-Fa-f]+/
+_integer_literal: octal_literal
+    | decimal_literal
+    | hexadecimal_literal
+
+// TODO
+fixed_pt_literal: "TODO_FIXED"
+
+%import common.SIGNED_FLOAT
+floating_pt_literal: SIGNED_FLOAT
+
+%import common.ESCAPED_STRING
+string_literal: ESCAPED_STRING
+wide_string_literal: "TODO_WIDE_STRING"
+// TODO
+character_literal: /'\\?.+'/
+// TODO
+wide_character_literal: /[Ll]'\\?.+'/
+
+// Core Rules -----------------------------------------------------------------
+
+specification: definition*
+
+definition: annotation_appl* (module_dcl ";"
+    | const_dcl ";"
+    | type_dcl ";"
+    | annotation_dcl ";"
+    | except_dcl ";"
+    | interface_dcl ";"
+    | type_id_dcl ";"
+    | type_prefix_dcl ";"
+    | import_dcl ";"
+    | value_dcl ";")
+
+module_dcl: "module" _identifier "{" definition+ "}"
+
+_scoped_name: _identifier
+    | "::" _identifier
+    | _scoped_name "::" _identifier
+
+scoped_name: _scoped_name
+
+const_dcl: "const" const_type _identifier "=" const_expr
+
+const_type: integer_type
+    | floating_pt_type
+    | fixed_pt_const_type
+    | char_type
+    | wide_char_type
+    | boolean_type
+    | octet_type
+    | string_type
+    | wide_string_type
+    | scoped_name
+
+const_expr: or_expr
+
+?or_expr: xor_expr | or_expr "|" xor_expr
+
+?xor_expr: and_expr
+    | xor_expr "^" and_expr
+
+?and_expr: shift_expr
+    | and_expr "&" shift_expr
+
+?shift_expr: addsub_expr | shift_right_expr | shift_left_expr
+shift_right_expr: shift_expr ">>" addsub_expr
+shift_left_expr: shift_expr "<<" addsub_expr
+
+?addsub_expr: muldivrem_expr | add_expr | sub_expr
+add_expr: addsub_expr "+" muldivrem_expr
+sub_expr: addsub_expr "-" muldivrem_expr
+
+?muldivrem_expr: unary_expr | mul_expr | div_expr | rem_expr
+mul_expr: muldivrem_expr "*" unary_expr
+div_expr: muldivrem_expr "/" unary_expr
+rem_expr: muldivrem_expr "%" unary_expr
+
+?unary_expr: negative_expr
+    | positive_expr
+    | inverse_expr
+    | primary_expr
+positive_expr: "+" primary_expr
+negative_expr: "-" primary_expr
+inverse_expr: "~" primary_expr
+
+?primary_expr: scoped_name
+    | literal
+    | "(" const_expr ")"
+
+literal: _integer_literal
+    | floating_pt_literal
+    | fixed_pt_literal
+    | character_literal
+    | wide_character_literal
+    | boolean_literal
+    | string_literal
+    | wide_string_literal
+
+boolean_literal: "TRUE"i | "FALSE"i
+
+?positive_int_const: const_expr
+
+type_dcl: constr_type_dcl
+    | native_dcl
+    | typedef_dcl
+
+type_spec: simple_type_spec | template_type_spec
+
+simple_type_spec: base_type_spec
+    | scoped_name
+
+base_type_spec: integer_type
+    | floating_pt_type
+    | char_type
+    | wide_char_type
+    | boolean_type
+    | octet_type
+    | object_type
+    | any_type
+    | value_base_type
+
+any_type: "any"
+
+?floating_pt_type: "float"
+    | "double"
+    | "long" "double"
+
+?integer_type: signed_int
+    | unsigned_int
+
+?signed_int: signed_short_int
+    | signed_long_int
+    | signed_longlong_int
+
+?signed_short_int: "short"
+
+?signed_long_int: "long"
+
+?signed_longlong_int: "long" "long"
+
+?unsigned_int: unsigned_short_int
+    | unsigned_long_int
+    | unsigned_longlong_int
+
+?unsigned_short_int: "unsigned" "short"
+
+?unsigned_long_int: "unsigned" "long"
+
+?unsigned_longlong_int: "unsigned" "long" "long"
+
+?char_type: "char"
+
+?wide_char_type: "wchar"
+
+?boolean_type: "boolean"
+
+?octet_type: "octet"
+
+template_type_spec: sequence_type
+    | string_type
+    | wide_string_type
+    | fixed_pt_type
+
+sequence_type: "sequence" "<" type_spec "," positive_int_const ">"
+    | "sequence" "<" type_spec ">"
+
+string_type: "string" "<" positive_int_const ">"
+    | "string"
+
+wide_string_type: "wstring" "<" positive_int_const ">"
+    | "wstring"
+
+fixed_pt_type: "fixed" "<" positive_int_const "," positive_int_const ">"
+
+fixed_pt_const_type: "fixed"
+
+constr_type_dcl: struct_dcl
+    | union_dcl
+    | enum_dcl
+
+struct_dcl: struct_def
+    | struct_forward_dcl
+
+struct_def: "struct" _identifier "{" member+ "}"
+
+member: annotation_appl* type_spec declarators ";"
+
+struct_forward_dcl: "struct" _identifier
+
+union_dcl: union_def
+    | union_forward_dcl
+
+union_def: "union" _identifier "switch" "(" switch_type_spec ")" "{" switch_body "}"
+
+switch_type_spec: integer_type
+    | char_type
+    | boolean_type
+    | scoped_name
+
+switch_body: case+
+
+case: case_label+ element_spec ";"
+
+case_label: "case" const_expr ":" | "default" ":"
+
+element_spec: type_spec declarator
+
+union_forward_dcl: "union" _identifier
+
+enum_dcl: "enum" _identifier "{" enumerator ("," enumerator )* "}"
+
+enumerator: _identifier
+
+array_declarator: _identifier fixed_array_size+
+
+fixed_array_size: "[" positive_int_const "]"
+
+native_dcl: "native" simple_declarator
+
+simple_declarator: _identifier
+
+typedef_dcl: "typedef" type_declarator
+
+type_declarator: (simple_type_spec|template_type_spec|constr_type_dcl) any_declarators
+
+any_declarators: any_declarator ("," any_declarator)*
+
+any_declarator: simple_declarator | array_declarator
+
+?declarators: declarator ("," declarator)*
+
+declarator: simple_declarator | array_declarator
+
+// 7.4.3 "Building Block Interfaces - Basic" Specfic Rules --------------------
+except_dcl: "exception" _identifier "{" member* "}"
+interface_dcl: interface_def | interface_forward_dcl
+interface_def: interface_header "{" interface_body "}"
+interface_forward_dcl: interface_kind _identifier
+interface_header: interface_kind _identifier [ interface_inheritance_spec ]
+interface_kind: ("local"|"abstract")? "interface"
+interface_inheritance_spec: ":" interface_name ( "," interface_name )*
+interface_name: scoped_name
+interface_body: export*
+export: op_dcl ";"
+    | attr_dcl ";"
+    | type_id_dcl ";"
+    | type_prefix_dcl ";"
+    | import_dcl ";"
+    | op_oneway_dcl ";"
+    | op_with_context ";"
+    | type_dcl ";"
+    | const_dcl ";"
+    | except_dcl ";"
+op_dcl: op_type_spec _identifier "(" [ parameter_dcls ] ")" [ raises_expr ]
+op_type_spec: type_spec | "void"
+parameter_dcls: param_dcl ( "," param_dcl ) *
+param_dcl: param_attribute type_spec simple_declarator
+param_attribute: "in" | "out" | "inout"
+raises_expr: "raises" "(" scoped_name ( "," scoped_name ) * ")"
+attr_dcl: readonly_attr_spec | attr_spec
+readonly_attr_spec: "readonly" "attribute" type_spec readonly_attr_declarator
+readonly_attr_declarator: simple_declarator raises_expr
+    | simple_declarator ( "," simple_declarator )*
+attr_spec: "attribute" type_spec attr_declarator
+attr_declarator: simple_declarator attr_raises_expr
+    | simple_declarator ( "," simple_declarator )*
+attr_raises_expr: get_excep_expr [ set_excep_expr ]
+    | set_excep_expr
+get_excep_expr: "getraises" exception_list
+set_excep_expr: "setraises" exception_list
+exception_list: "(" scoped_name ( "," scoped_name ) * ")"
+
+// 7.4.5 "Building Block Value Types" Specfic Rules ---------------------------
+value_dcl: value_def
+    | value_forward_dcl
+    // | value_box_def
+    | value_abs_def
+value_def: value_header "{" value_element* "}"
+value_header: value_kind _identifier value_inheritance_spec
+value_inheritance_spec: (":" value_name)? ("supports" interface_name)?
+    // | ":" ["truncatable"] value_name ("," value_name)* [ "supports" interface_name ("," interface_name)* ]
+value_kind: "valuetype" | "custom" "valuetype"
+value_name: scoped_name
+value_element: export
+    | state_member
+    | init_dcl
+state_member: ( "public" | "private" ) type_spec declarators ";"
+init_dcl: "factory" _identifier "(" [ init_param_dcls ] ")" [ raises_expr ] ";"
+init_param_dcls: init_param_dcl ("," init_param_dcl)*
+init_param_dcl: "in" type_spec simple_declarator
+value_forward_dcl: value_kind _identifier
+
+// 7.4.6 "Building Block CORBA-Specific – Interfaces" Specfic Rules ---------
+type_id_dcl: "typeid" scoped_name string_literal
+type_prefix_dcl: "typeprefix" scoped_name string_literal
+import_dcl: "import" imported_scope
+imported_scope: scoped_name | string_literal
+object_type: "Object"
+op_oneway_dcl: "oneway" "void" _identifier "(" [ in_parameter_dcls ] ")"
+in_parameter_dcls: in_param_dcl ( "," in_param_dcl )*
+in_param_dcl: "in" type_spec simple_declarator
+op_with_context: (op_dcl | op_oneway_dcl) context_expr
+context_expr: "context" "(" string_literal ( "," string_literal* ) ")"
+
+// 7.4.7 "Building Block CORBA-Specific – Value Types" Specfic Rules ---------
+value_box_def: "valuetype" _identifier type_spec
+value_abs_def: "abstract" "valuetype" _identifier value_inheritance_spec? "{" export* "}"
+value_base_type: "ValueBase"
+
+// 7.4.15 "Building Block Annotations" Specfic Rules -------------------------
+annotation_dcl: annotation_header "{" annotation_body "}"
+annotation_header: "@annotation" _identifier
+annotation_body: (annotation_member
+    | enum_dcl ";"
+    | const_dcl ";"
+    | typedef_dcl ";" )*
+annotation_member: annotation_member_type simple_declarator ("default" const_expr)? ";"
+annotation_member_type: const_type | any_const_type
+any_const_type: "any"
+
+annotation_appl: "@" scoped_name ["(" annotation_appl_params ")"]
+annotation_appl_params: const_expr
+    | annotation_appl_param ("," annotation_appl_param)*
+annotation_appl_param: _identifier "=" const_expr
+
+%declare ANNOTATION_APPL_DONE
+annotation_appl_only: annotation_appl ANNOTATION_APPL_DONE

@@ -1,0 +1,44 @@
+@avidly::assert_value(0)
+const short zero = 0;
+@avidly::assert_value(7)
+const short oct = 07;
+@avidly::assert_value(103)
+const short dec = 103;
+@avidly::assert_value(255)
+const short hex1 = 0xFF;
+@avidly::assert_value(255)
+const short hex2 = 0Xff;
+
+#ifdef SHOULD_FAIL
+@avidly::assert_value(1)
+const short fail_value = 0;
+#endif
+
+@avidly::assert_value(3)
+const short or_value = 2 | 1;
+@avidly::assert_value(2)
+const short xor_value = 3 ^ 1;
+@avidly::assert_value(1)
+const short and_value = 3 & 1;
+@avidly::assert_value(8)
+const short shift_left_value = 1 << 3;
+@avidly::assert_value(2)
+const short shift_right_value = 16 >> 3;
+@avidly::assert_value(0xEF)
+const short add_value = 0x0E + 0xE1;
+@avidly::assert_value(44)
+const short sub_value = 88 - 44;
+@avidly::assert_value(18)
+const short mul_value = 3 * 6;
+@avidly::assert_value(5)
+const short div_value = 25 / 5;
+@avidly::assert_value(1)
+const short rem_value = 33 % 2;
+// TODO
+/* 'positive_expr': (1, '+'), */
+/* 'negative_expr': (1, '-'), */
+/* 'inverse_expr': (1, '~'), */
+
+// TODO: More Complicated Expressions
+/* @avidly::assert_value(9) */
+/* const short rem_value = 1 + 2 + 3 + 4 - 1; */
