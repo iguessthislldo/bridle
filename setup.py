@@ -5,11 +5,11 @@ setup(
     packages=find_packages(),
     entry_points={
         'console_scripts': [
-            'avidly=avidly.__main__:main',
+            'bridle=bridle.__main__:main',
         ],
     },
     package_data={
-        'avidly': [
+        'bridle': [
             'avlidly/idl.lark',
         ],
     },

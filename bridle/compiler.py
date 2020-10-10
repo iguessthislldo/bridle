@@ -155,7 +155,7 @@ class RawTreeVistior(lark.visitors.Interpreter):
 
         unused_annotations = []
         for annotation in self.current_annotations:
-            if annotation[0] == 'avidly::assert_value':
+            if annotation[0] == 'bridle::assert_value':
                 expected = annotation[1].eval()
                 actual = value.eval()
                 if expected != actual:
@@ -257,14 +257,14 @@ def unexpected_token_handler(e):
             #         '>>HERE<<', ''.join([str(i) for i in tokens[skip:]]))
             done = 'ANNOTATION_APPL_DONE'
             try:
-                e.puppet.parser.avidly_annotations_only_parser.parse(
+                e.puppet.parser.bridle_annotations_only_parser.parse(
                     tokens[:skip] + [lark.lexer.Token(done, None)])
                 # print('SUCCESS')
             except lark.exceptions.UnexpectedToken as ex:
                 # print(ex.expected)
                 if done in ex.expected:
                     skip -= 1
-                    print(e.puppet.parser.avidly_idl_file.get_position(e.pos_in_stream),
+                    print(e.puppet.parser.bridle_idl_file.get_position(e.pos_in_stream),
                         'Skipping annotation in unsupported place',
                         ''.join([str(i) for i in tokens[:skip]]))
                     e.puppet._stream = iter(tokens[skip:])
@@ -330,7 +330,7 @@ class IdlFile:
 
     def parse(self, parser, visitor):
         try:
-            parser.parser.parser.parser.avidly_idl_file = self
+            parser.parser.parser.parser.bridle_idl_file = self
             self.raw_tree = parser.parse(self.contents, on_error=unexpected_token_handler)
             visitor.visit(self.raw_tree)
         except lark.exceptions.UnexpectedInput as e:
@@ -356,7 +356,7 @@ class Compiler:
 
     def __init__(self):
         self.parser = self.get_idl_parser()
-        self.parser.parser.parser.parser.avidly_annotations_only_parser = \
+        self.parser.parser.parser.parser.bridle_annotations_only_parser = \
             self.get_idl_parser(annotations_only=True)
 
     def compile(self, paths, includes=[], defines=[]):
