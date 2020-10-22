@@ -3,15 +3,7 @@ name: test
 on:
   push:
     branches:
-      - master
-  schedule:
-    - cron: "0 3 * * 5"
-  workflow_dispatch:
-    inputs:
-      whatever:
-        description: 'Would like to remove this'
-        required: false
-        default: 'Wiggle'
+      - main
 
 jobs:
   build:
@@ -39,6 +31,12 @@ jobs:
       with:
         repository: 'objectcomputing/OpenDDS'
         path: 'OpenDDS'
+
+    - name: Checkout ACE/TAO
+      uses: actions/checkout@v2
+      with:
+        repository: 'DOCGroup/ACE_TAO'
+        path: 'OpenDDS/ACE_TAO'
 
     - name: Run Tests
       run: |
