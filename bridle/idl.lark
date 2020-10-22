@@ -110,7 +110,8 @@ inverse_expr: "~" primary_expr
 
 ?primary_expr: scoped_name
     | literal
-    | "(" const_expr ")"
+    | paren_expr
+paren_expr: "(" const_expr ")"
 
 literal: _integer_literal
     | floating_pt_literal
@@ -121,7 +122,9 @@ literal: _integer_literal
     | string_literal
     | wide_string_literal
 
-boolean_literal: "TRUE"i | "FALSE"i
+boolean_literal: true_boolean_literal | false_boolean_literal
+true_boolean_literal: "TRUE"i
+false_boolean_literal: "FALSE"i
 
 ?positive_int_const: const_expr
 
