@@ -9,7 +9,7 @@ setup(
     },
     package_data={
         'bridle': [
-            'avlidly/idl.lark',
+            'bridle/idl.lark',
         ],
     },
     install_requires=[
