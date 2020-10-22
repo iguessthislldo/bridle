@@ -1,8 +1,6 @@
 from pathlib import Path
-import sys
 import re
 from io import StringIO
-import warnings
 
 import lark
 from pcpp import Preprocessor
@@ -71,9 +69,9 @@ class ConstExpr:
         'decimal_literal': lambda t: int(str(t)),
         'hexadecimal_literal': lambda t: int(str(t), 16),
         'floating_pt_literal': lambda t: float(str(t)),
-        'string_literal': lambda t: eval(str(t)), # TODO
-        'character_literal': lambda t: eval(str(t)), # TODO
-        'wide_character_literal': lambda t: eval(str(t)[1:]), # TODO
+        'string_literal': lambda t: eval(str(t)),  # TODO
+        'character_literal': lambda t: eval(str(t)),  # TODO
+        'wide_character_literal': lambda t: eval(str(t)[1:]),  # TODO
         'boolean_literal': lambda t: \
             {"true_boolean_literal": True, "false_boolean_literal": False}[t.data],
     }
@@ -89,9 +87,9 @@ class ConstExpr:
             try:
                 self.value = self.literals[child.data](child.children[0])
             except Exception as e:
-                raise Error(
-                    "Error while converting {} tree to value:\n" + \
-                    "Error was:{}\n  Tree was:{}".format(
+                raise Error((
+                    "Error while converting {} tree to value:\n"
+                    + "Error was:{}\n  Tree was:{}").format(
                         tree.data, str(e), tree.pretty()))
             self.evaled = True
         elif tree.data in self.ops and child_count in (1, 2):
@@ -103,12 +101,11 @@ class ConstExpr:
                 self.value = self.eval()
                 self.evaled = True
         elif tree.data == 'scoped_name':
-            pass # TODO: Ignore For Now
+            pass  # TODO: Ignore For Now
         else:
             raise Error("Unexpected {} tree has {} children:\n{}".format(
                 tree.data, len(tree.children), tree.pretty()))
         # print(repr(self))
-
 
     def can_eval(self):
         if isinstance(self.value, self.Operation):
@@ -253,7 +250,7 @@ class RawTreeVistior(lark.visitors.Interpreter):
                 annotation = (name, ConstExpr(args[0]), None)
             else:
                 # TODO
-                annotation = (name, None, None) # Mutiple args will go in 3rd place in tuple
+                annotation = (name, None, None)  # Mutiple args will go in 3rd place in tuple
         else:
             annotation = (name, None, None)
         self.current_annotations.append(annotation)
@@ -417,7 +414,7 @@ class Compiler:
                     preprocessor.define(define.replace('=', ' ', 1))
                 idl_file.load(preprocessor)
                 idl_file.parse(self.parser, visitor, settings['dump_raw_tree'])
-        except Exception as e:
+        except Exception:
             self.parser.parser.parser.parser.bridle_warn_about_unsupported_annotations = \
                 self.default_settings['warn_about_unsupported_annotations']
             raise

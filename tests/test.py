@@ -122,9 +122,9 @@ class ExternalIdlFileTests(unittest.TestCase):
     def test_opendds_idl_files(self):
         tao_path = Path(os.environ.get('TAO_ROOT', opendds_path / 'ACE_TAO/TAO'))
         compiler.compile(
-            filter(lambda p:\
-                not p.samefile(opendds_path / 'tools/excelRTD/IRTDServer.idl') and \
-                tao_path not in p.parents,
+            filter(lambda p:
+                not p.samefile(opendds_path / 'tools/excelRTD/IRTDServer.idl')
+                and tao_path not in p.parents,
                 opendds_path.rglob('**/*.idl')),
             includes=[
                 opendds_path,
