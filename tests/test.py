@@ -133,9 +133,10 @@ class ExternalIdlFileTests(unittest.TestCase):
                 'OPENDDS_SECURITY'
             ],
         )
-        idl_file_filter = lambda p: \
-            not p.samefile(opendds_path / 'tools/excelRTD/IRTDServer.idl') \
-            and tao_path not in p.parents
+
+        def idl_file_filter(p):
+            return not p.samefile(opendds_path / 'tools/excelRTD/IRTDServer.idl') \
+                and tao_path not in p.parents
         for f in filter(idl_file_filter, opendds_path.rglob('**/*.idl')):
             with self.subTest(path=f):
                 compiler.compile([f], **settings)
