@@ -121,11 +121,7 @@ class ExternalIdlFileTests(unittest.TestCase):
         "DDS_ROOT environment variable is not a valid directory")
     def test_opendds_idl_files(self):
         tao_path = Path(os.environ.get('TAO_ROOT', opendds_path / 'ACE_TAO/TAO'))
-        compiler.compile(
-            filter(lambda p:
-                not p.samefile(opendds_path / 'tools/excelRTD/IRTDServer.idl')
-                and tao_path not in p.parents,
-                opendds_path.rglob('**/*.idl')),
+        settings = dict(
             includes=[
                 opendds_path,
                 tao_path,
@@ -137,6 +133,12 @@ class ExternalIdlFileTests(unittest.TestCase):
                 'OPENDDS_SECURITY'
             ],
         )
+        idl_file_filter = lambda p: \
+            not p.samefile(opendds_path / 'tools/excelRTD/IRTDServer.idl') \
+            and tao_path not in p.parents
+        for f in filter(idl_file_filter, opendds_path.rglob('**/*.idl')):
+            with self.subTest(path=f):
+                compiler.compile([f], **settings)
 
 
 if __name__ == '__main__':
