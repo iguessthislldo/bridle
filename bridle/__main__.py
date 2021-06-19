@@ -29,8 +29,8 @@ def main():
     args = argparser.parse_args()
 
     args_dict = vars(args)
-    compiler = Compiler(**{k: args_dict[k] for k in set(
-        'includes', 'defines', 'dump_raw_tree', 'dump_tree')})
+    compiler = Compiler(**{k: args_dict[k] for k in set((
+        'includes', 'defines', 'dump_raw_tree', 'dump_tree'))})
     compiler.compile(args.idl_files)
 
 

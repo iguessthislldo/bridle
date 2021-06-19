@@ -50,7 +50,7 @@ class ConstExprTests(unittest.TestCase):
             const float float1 = 1.2;
             '''])
 
-    def test_float_char_literals(self):
+    def test_char_literals(self):
         # TODO
         pass
 
@@ -140,6 +140,24 @@ class ExternalIdlFileTests(unittest.TestCase):
         for f in filter(idl_file_filter, opendds_path.rglob('**/*.idl')):
             with self.subTest(path=f):
                 compiler.compile([f], **settings)
+
+
+class PreprocessorTests(unittest.TestCase):
+
+    def test_builtin_define(self):
+        compiler.compile(direct=['''\
+            #ifndef __BRIDLE
+            Something that's not IDL
+            #endif
+            '''])
+
+    @unittest.expectedFailure
+    def test_builtin_define_inverse(self):
+        compiler.compile(direct=['''\
+            #ifdef __BRIDLE
+            Something that's not IDL
+            #endif
+            '''])
 
 
 if __name__ == '__main__':
