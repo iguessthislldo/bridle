@@ -18,7 +18,7 @@ jobs:
     - uses: actions/checkout@v2
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v1
+      uses: actions/setup-python@v2
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -26,21 +26,22 @@ jobs:
       run: |
         python -m pip --verbose install .
 
-    - name: Checkout OpenDDS
-      uses: actions/checkout@v2
-      with:
-        repository: 'objectcomputing/OpenDDS'
-        path: 'OpenDDS'
+    # - name: Checkout OpenDDS
+    #   uses: actions/checkout@v2
+    #   with:
+    #     repository: 'objectcomputing/OpenDDS'
+    #     path: 'OpenDDS'
 
-    - name: Checkout ACE/TAO
-      uses: actions/checkout@v2
-      with:
-        repository: 'DOCGroup/ACE_TAO'
-        path: 'OpenDDS/ACE_TAO'
+    # - name: Checkout ACE/TAO
+    #   uses: actions/checkout@v2
+    #   with:
+    #     repository: 'DOCGroup/ACE_TAO'
+    #     path: 'OpenDDS/ACE_TAO'
 
     - name: Run Tests
       run: |
-        DDS_ROOT=OpenDDS python tests/test.py --verbose
+        # DDS_ROOT=OpenDDS python tests/test.py --verbose
+        python tests/test.py --verbose
 
     - name: Lint with flake8
       run: |

@@ -119,6 +119,8 @@ class IdlFileTests(unittest.TestCase):
             [test_path / 'general_test.idl'], warn_about_unsupported_annotations=False)
 
 
+# TODO
+@unittest.skip("TODO")
 class ExternalIdlFileTests(unittest.TestCase):
 
     @unittest.skipUnless(opendds_path.is_dir(),
