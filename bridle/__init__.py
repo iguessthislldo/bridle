@@ -1,5 +1,5 @@
-from .compiler import Compiler
+from .idl import IdlParser
 
 __all__ = [
-    'Compiler',
+    'IdlParser',
 ]

@@ -3,22 +3,26 @@ from pathlib import Path
 import os
 
 import bridle
-compiler = bridle.Compiler()
+from bridle.utils.iters import PeekIter, ChainedIter
+
+idl_parser = bridle.IdlParser()
 test_path = Path(__file__).parent
 opendds_path = Path(os.environ.get('DDS_ROOT', 'OpenDDS'))
 
 
+# TODO
+@unittest.skip("TODO")
 class ConstExprTests(unittest.TestCase):
 
     @unittest.expectedFailure
     def test_expect_assert_value_fail(self):
-        compiler.compile(direct=['''\
+        idl_parser.parse(direct_input=['''\
             @bridle::assert_value(1)
             const short fail_value = 0;
             '''])
 
     def test_int_literals(self):
-        compiler.compile(direct=['''\
+        idl_parser.parse(direct_input=['''\
             @bridle::assert_value(0)
             const short zero = 0;
             @bridle::assert_value(7)
@@ -32,7 +36,7 @@ class ConstExprTests(unittest.TestCase):
             '''])
 
     def test_boolean_literals(self):
-        compiler.compile(direct=['''\
+        idl_parser.parse(direct_input=['''\
             @bridle::assert_value(true)
             const boolean boolean1 = true;
             @bridle::assert_value(true)
@@ -45,7 +49,7 @@ class ConstExprTests(unittest.TestCase):
 
     def test_float_literals(self):
         # TODO: More Cases
-        compiler.compile(direct=['''\
+        idl_parser.parse(direct_input=['''\
             @bridle::assert_value(1.2)
             const float float1 = 1.2;
             '''])
@@ -55,7 +59,7 @@ class ConstExprTests(unittest.TestCase):
         pass
 
     def test_const_expr_ops_basic(self):
-        compiler.compile(direct=['''\
+        idl_parser.parse(direct_input=['''\
             @bridle::assert_value(3)
             const short or_value = 2 | 1;
             @bridle::assert_value(2)
@@ -89,7 +93,7 @@ class ConstExprTests(unittest.TestCase):
             '''])
 
     def test_const_expr_ops(self):
-        compiler.compile(direct=['''\
+        idl_parser.parse(direct_input=['''\
             @bridle::assert_value(9)
             const short expr1 = 1 + 2 + 3 + 4 - 1;
             @bridle::assert_value(10)
@@ -101,7 +105,7 @@ class ConstExprTests(unittest.TestCase):
     # TODO
     @unittest.expectedFailure
     def test_const_expr_references(self):
-        compiler.compile(direct=['''\
+        idl_parser.parse(direct_input=['''\
             const short const1 = 0;
             @bridle::assert_value(0)
             const short const2 = const1;
@@ -111,7 +115,7 @@ class ConstExprTests(unittest.TestCase):
 class IdlFileTests(unittest.TestCase):
 
     def test_general_test_idl(self):
-        compiler.compile(
+        idl_parser.parse(
             [test_path / 'general_test.idl'], warn_about_unsupported_annotations=False)
 
 
@@ -139,13 +143,13 @@ class ExternalIdlFileTests(unittest.TestCase):
                 and tao_path not in p.parents
         for f in filter(idl_file_filter, opendds_path.rglob('**/*.idl')):
             with self.subTest(path=f):
-                compiler.compile([f], **settings)
+                idl_parser.parse([f], **settings)
 
 
 class PreprocessorTests(unittest.TestCase):
 
     def test_builtin_define(self):
-        compiler.compile(direct=['''\
+        idl_parser.parse(direct_inputs=['''\
             #ifndef __BRIDLE
             Something that's not IDL
             #endif
@@ -153,11 +157,49 @@ class PreprocessorTests(unittest.TestCase):
 
     @unittest.expectedFailure
     def test_builtin_define_inverse(self):
-        compiler.compile(direct=['''\
+        idl_parser.parse(direct_inputs=['''\
             #ifdef __BRIDLE
             Something that's not IDL
             #endif
             '''])
+
+
+class TestIters(unittest.TestCase):
+
+    def test_single_peek(self):
+        it1 = PeekIter([1, 2, 3])
+        self.assertFalse(it1.done())
+        self.assertEqual(next(it1), 1)
+        self.assertEqual(it1.peek(), [2])
+        self.assertEqual(next(it1), 2)
+        it1.advance()
+        self.assertEqual(it1.peek(), [])
+        self.assertTrue(it1.done())
+
+    def test_multiple_peek(self):
+        it2 = PeekIter([1, 2, 3, 4, 5])
+        self.assertEqual(next(it2), 1)
+        self.assertEqual(it2.peek(count=2), [2, 3])
+        self.assertEqual(it2.peek(start=2, count=2), [3, 4])
+        self.assertEqual(next(it2), 2)
+        self.assertEqual(it2.peek(start=2, count=2), [3, 4])
+        self.assertEqual(next(it2), 3)
+        self.assertEqual(next(it2), 4)
+        self.assertEqual(next(it2), 5)
+        self.assertEqual(it2.peek(), [])
+        self.assertTrue(it2.done())
+
+    def test_chained(self):
+        it3 = PeekIter([1, 2, 3, 4])
+        self.assertEqual(next(it3), 1)
+        it4 = ChainedIter(it3)
+        it4.advance(2)
+        self.assertEqual(next(it4), 4)
+        self.assertTrue(it4.done())
+        self.assertEqual(next(it3), 2)
+        self.assertEqual(next(it3), 3)
+        self.assertEqual(next(it3), 4)
+        self.assertTrue(it3.done())
 
 
 if __name__ == '__main__':

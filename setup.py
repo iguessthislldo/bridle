@@ -7,13 +7,7 @@ setup(
             'bridle=bridle.__main__:main',
         ],
     },
-    package_data={
-        'bridle': [
-            'idl.lark',
-        ],
-    },
     install_requires=[
-        'lark-parser',
         'pcpp',
     ],
 )

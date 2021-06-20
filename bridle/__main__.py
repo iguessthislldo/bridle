@@ -1,14 +1,14 @@
 from argparse import ArgumentParser
 from pathlib import Path
 
-from .compiler import Compiler
+from . import IdlParser
 
 
 def main():
     # Parse Arguments
-    argparser = ArgumentParser(description='IDL Parser')
-    argparser.add_argument('idl_files',
-        metavar='IDL_FILE', type=Path, nargs='+',
+    argparser = ArgumentParser(description='Describe an OMG IDL file.')
+    argparser.add_argument('files',
+        metavar='FILE', type=Path, nargs='+',
         help='OMG IDL File(s)')
     argparser.add_argument('-I', '--include', dest='includes',
         type=Path, action='append', default=[],
@@ -29,9 +29,9 @@ def main():
     args = argparser.parse_args()
 
     args_dict = vars(args)
-    compiler = Compiler(**{k: args_dict[k] for k in set((
+    parser = IdlParser(**{k: args_dict[k] for k in set((
         'includes', 'defines', 'dump_raw_tree', 'dump_tree'))})
-    compiler.compile(args.idl_files)
+    print(parser.parse(args.files))
 
 
 if __name__ == "__main__":
