@@ -8,6 +8,7 @@ from pcpp import Preprocessor
 
 from .utils import PeekIter, ChainedIter, Location, is_sequence
 from .errors import BridleError, ParseError
+from . import tree
 
 macro_regex = re.compile(r'^\s*#.*$')
 line_regex = re.compile(r'\s*#line (\d+)(?: "(.*)")?')
@@ -27,21 +28,6 @@ class Keyword:
 class Token(enum.Enum):
     begin_scope = enum.auto()
     end_scope = enum.auto()
-    u8 = enum.auto()
-    i8 = enum.auto()
-    u16 = enum.auto()
-    i16 = enum.auto()
-    u32 = enum.auto()
-    i32 = enum.auto()
-    u64 = enum.auto()
-    i64 = enum.auto()
-    f32 = enum.auto()
-    f64 = enum.auto()
-    f128 = enum.auto()
-    boolean = enum.auto()
-    octet = enum.auto()
-    char = enum.auto()
-    wchar = enum.auto()
     SHORT = Keyword('short')
     LONG = Keyword('long')
     INT8 = Keyword('int8')
@@ -231,6 +217,16 @@ class Stream:
                 self.furthest_errors[0] is not None:
             return self.furthest_errors[0]
         return None
+
+
+class NameMaybeArray:
+    def __init__(self, name, array_dims=None):
+        self.name = name
+        self.array_dims = array_dims
+
+    def get_type(self, base_type):
+        return base_type if self.array_dims is None \
+            else tree.ArrayNode(base_type, self.array_dims)
 
 
 class IdlParser:
@@ -551,10 +547,10 @@ class IdlParser:
     # =========================================================================
 
     def start(self):
-        rv = []
+        root = tree.ModuleNode()
         while not self.stream.done():
-            rv.append(self.m_definition())
-        return rv
+            root.add_raw(self.m_definition())
+        return root
 
     # Building Block Core Data Types ==========================================
 
@@ -571,9 +567,9 @@ class IdlParser:
     @nontrivial_rule
     def m_module_dcl(self):
         self.m_exact('module')
-        name = self.m_identifier()
+        module = tree.ModuleNode(self.m_identifier())
         self.m_begin_scope()
-        members = [self.m_definition()]
+        module.add_raw(self.m_definition())
         while True:
             what = self.match((
                 'definition',
@@ -581,8 +577,8 @@ class IdlParser:
             ))
             if what == Token.end_scope:
                 break
-            members.append(what)
-        return [name, members]
+            module.add_raw(what)
+        return module
 
     @nontrivial_rule
     def m_scoped_name(self):
@@ -597,10 +593,12 @@ class IdlParser:
 
     @nontrivial_rule
     def m_const_dcl(self):
-        rv = [self.m_exact('const'), self.m_const_type(), self.m_identifier()]
+        self.m_exact('const')
+        constant = tree.ConstantNode(self.m_const_type())
+        constant.name = self.m_identifier()
         self.m_exact('=')
-        rv.append(self.m_const_expr())
-        return rv
+        constant.value = self.m_const_expr()
+        return constant
 
     @nontrivial_rule
     def m_const_type(self):
@@ -668,42 +666,45 @@ class IdlParser:
 
     @nontrivial_rule
     def m_floating_pt_type(self):
-        return self.m_exact_seqs({
-            'float': Token.f32,
-            'double': Token.f64,
-            ('long', 'double'): Token.f128,
-        })
+        return tree.PrimitiveNode(self.m_exact_seqs({
+            'float': tree.PrimitiveNode.Kind.f32,
+            'double': tree.PrimitiveNode.Kind.f64,
+            ('long', 'double'): tree.PrimitiveNode.Kind.f128,
+        }))
 
     @nontrivial_rule
     def m_integer_type(self):
-        return self.m_exact_seqs({
-            'int8': Token.i8,
-            'uint8': Token.u8,
-            'int16': Token.i16,
-            'short': Token.i16,
-            'uint16': Token.u16,
-            ('unsigned', 'short'): Token.u16,
-            'int32': Token.i32,
-            'long': Token.i32,
-            'uint32': Token.u32,
-            ('unsigned', 'long'): Token.u32,
-            'int64': Token.i64,
-            ('long', 'long'): Token.i64,
-            'uint64': Token.u64,
-            ('unsigned', 'long', 'long'): Token.u64,
-        })
+        return tree.PrimitiveNode(self.m_exact_seqs({
+            'int8': tree.PrimitiveNode.Kind.i8,
+            'uint8': tree.PrimitiveNode.Kind.u8,
+            'int16': tree.PrimitiveNode.Kind.i16,
+            'short': tree.PrimitiveNode.Kind.i16,
+            'uint16': tree.PrimitiveNode.Kind.u16,
+            ('unsigned', 'short'): tree.PrimitiveNode.Kind.u16,
+            'int32': tree.PrimitiveNode.Kind.i32,
+            'long': tree.PrimitiveNode.Kind.i32,
+            'uint32': tree.PrimitiveNode.Kind.u32,
+            ('unsigned', 'long'): tree.PrimitiveNode.Kind.u32,
+            'int64': tree.PrimitiveNode.Kind.i64,
+            ('long', 'long'): tree.PrimitiveNode.Kind.i64,
+            'uint64': tree.PrimitiveNode.Kind.u64,
+            ('unsigned', 'long', 'long'): tree.PrimitiveNode.Kind.u64,
+        }))
 
     def m_char_type(self):
-        return self.m_exact_seqs({'char': Token.char})
+        return tree.PrimitiveNode(self.m_exact_seqs({'char': tree.PrimitiveNode.Kind.c8}))
 
     def m_wide_char_type(self):
-        return self.m_exact_seqs({'wchar': Token.wchar})
+        return tree.PrimitiveNode(
+            self.m_exact_seqs({'wchar': tree.PrimitiveNode.Kind.c16}))
 
     def m_boolean_type(self):
-        return self.m_exact_seqs({'boolean': Token.boolean})
+        return tree.PrimitiveNode(
+            self.m_exact_seqs({'boolean': tree.PrimitiveNode.Kind.boolean}))
 
     def m_octet_type(self):
-        return self.m_exact_seqs({'octet': Token.octet})
+        return tree.PrimitiveNode(
+            self.m_exact_seqs({'octet': tree.PrimitiveNode.Kind.byte}))
 
     @nontrivial_rule
     def m_template_type_spec(self):
@@ -716,20 +717,24 @@ class IdlParser:
 
     @nontrivial_rule
     def m_sequence_type(self):
-        rv = [self.m_exact('sequence')]
+        self.m_exact('sequence')
         self.m_exact('<')
-        rv.append(self.m_type_spec())
+        base_type = self.m_type_spec()
         if self.m_exact_maybe(','):
-            rv.append(self.m_positive_int_const())
+            max_count = self.m_positive_int_const()
+        else:
+            max_count = None
         self.m_exact('>')
-        return rv
+        return tree.SequenceNode(base_type, max_count)
 
-    def _string_type(self, prefix=''):
-        rv = [self.m_exact(prefix + 'string')]
+    def _string_type(self, is_wide=False):
+        self.m_exact('wstring' if is_wide else 'string')
+        string = tree.PrimitiveNode(
+            tree.PrimitiveNode.Kind.s16 if is_wide else tree.PrimitiveNode.Kind.s8)
         if self.m_exact_maybe('<'):
-            rv.append(self.m_positive_int_const())
+            string.element_count_limit = self.m_positive_int_const()
             self.m_exact('>')
-        return rv
+        return string
 
     @nontrivial_rule
     def m_string_type(self):
@@ -737,7 +742,7 @@ class IdlParser:
 
     @nontrivial_rule
     def m_wide_string_type(self):
-        return self._string_type(prefix='w')
+        return self._string_type(is_wide=True)
 
     @nontrivial_rule
     def m_constr_type_dcl(self):
@@ -749,10 +754,9 @@ class IdlParser:
 
     @nontrivial_rule
     def m_struct_dcl(self):
-        rv = [self.m_exact('struct')]
-        rv.append(self.m_identifier())
+        self.m_exact('struct')
+        struct = tree.StructNode(self.m_identifier())
         if self.m_begin_scope_maybe():
-            members = []
             while True:
                 what = self.match((
                     'member',
@@ -760,15 +764,18 @@ class IdlParser:
                 ))
                 if what == Token.end_scope:
                     break
-                members.append(what)
-            rv.append(members)
-        return rv
+                struct.add_raw(what)
+        return struct
 
     @nontrivial_rule
     def m_member(self):
-        rv = [self.m_type_spec(), self.m_declarators()]
+        type_spec = self.m_type_spec()
+        members = []
+        for name_maybe_array in self.m_declarators():
+            members.append(tree.FieldNode(
+                name_maybe_array.name, name_maybe_array.get_type(type_spec)))
         self.m_exact(';')
-        return rv
+        return members
 
     def match_until(self, repeating_rules, terminating_rules, at_least_one=True):
         repeating_results = []
@@ -783,16 +790,18 @@ class IdlParser:
 
     @nontrivial_rule
     def m_union_dcl(self):
-        rv = [self.m_exact('union')]
-        rv.append(self.m_identifier())
+        self.m_exact('union')
+        name = self.m_identifier()
+        union = tree.UnionNode()
+        union.name = name
         if self.m_exact_maybe('switch'):
             self.m_exact('(')
-            rv.append(self.m_switch_type_spec())
+            union.disc_type = self.m_switch_type_spec()
             self.m_exact(')')
             self.m_begin_scope()
             cases, _ = self.match_until(('case'), ('end_scope'))
-            rv.append(cases)
-        return rv
+            union.add_raw(cases)
+        return union
 
     @nontrivial_rule
     def m_switch_type_spec(self):
@@ -829,34 +838,43 @@ class IdlParser:
 
     @nontrivial_rule
     def m_enum_dcl(self):
-        rv = [self.m_exact('enum'), self.m_identifier()]
+        enum_node = tree.EnumNode()
+        self.m_exact('enum')
+        enum_node.name = self.m_identifier()
         self.m_begin_scope()
-        rv.append(self.comma_list_of(('enumerator')))
+        enum_node.add_raw(self.comma_list_of(('enumerator')))
         self.m_end_scope()
-        return rv
+        return enum_node
 
     @nontrivial_rule
     def m_array_declarator(self):
-        rv = ['array', self.m_identifier()]
+        # TODO: Multidem arrays
+        name = self.m_identifier()
         self.m_exact('[')
-        rv.append(self.m_positive_int_const())
+        size = self.m_positive_int_const()
         self.m_exact(']')
-        return rv
+        return NameMaybeArray(name, [size])
 
     def m_simple_declarator(self):
-        return self.m_identifier()
+        return NameMaybeArray(self.m_identifier())
 
     @nontrivial_rule
     def m_typedef_dcl(self):
-        return [self.m_exact('typedef'), self.m_type_declarator()]
+        self.m_exact('typedef')
+        base_type, name_maybe_arrays = self.m_type_declarator()
+        typedefs = []
+        for name_maybe_array in name_maybe_arrays:
+            typedefs.append(tree.TypedefNode(
+                name_maybe_array.name, name_maybe_array.get_type(base_type)))
+        return typedefs
 
     @nontrivial_rule
     def m_type_declarator(self):
-        return [self.match((
+        return (self.match((
             'simple_type_spec',
             'template_type_spec',
             'constr_type_dcl',
-        )), self.m_any_declarators()]
+        )), self.m_any_declarators())
 
     @nontrivial_rule
     def m_any_declarators(self):

@@ -31,7 +31,7 @@ def main():
     args_dict = vars(args)
     parser = IdlParser(**{k: args_dict[k] for k in set((
         'includes', 'defines', 'dump_raw_tree', 'dump_tree'))})
-    print(parser.parse(args.files))
+    print(repr(parser.parse(args.files)))
 
 
 if __name__ == "__main__":
