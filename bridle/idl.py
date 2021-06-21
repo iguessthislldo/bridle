@@ -2,6 +2,7 @@ from pathlib import Path
 import re
 from io import StringIO
 import enum
+from string import hexdigits, octdigits
 
 from pcpp import Preprocessor
 
@@ -448,14 +449,92 @@ class IdlParser:
         self.m_ws_after()
         return rv
 
-    # TODO: Real Code
-    string_re = re.compile(r'[^"]')
+    def expect_char(self, what):
+        self.assert_not_end(what)
+        return next(self.stream)
+
+    def expect_char_peek(self, what):
+        self.assert_not_end(what)
+        return self.stream.peek()
+
+    def hex_escape(self, maxlen):
+        what = ['hex escape']
+        c = self.expect_char(what)
+        if c not in hexdigits:
+            raise ParseError(self.stream.loc(),
+                '{} is not a valid hexadecimal digit', repr(c))
+        hexstr = c
+        for i in range(maxlen - 1):
+            c = self.expect_char_peek(what)
+            if c in hexdigits:
+                hexstr += c
+                self.stream.advance()
+            else:
+                break
+        return ord(int(hexstr, base=16))
+
+    def get_character_literal(self, is_string=False, is_wide=False):
+        # Spec says we shouldn't allow zero value, we will allow it because not
+        # all languages have null terminated strings.
+        what = ['part of string']
+        while True:
+            c = self.expect_char(what)
+            if c == '\\':
+                c = self.expect_char(what)
+                if c == 'n':
+                    yield '\n'
+                elif c == 't':
+                    yield '\t'
+                elif c == 'v':
+                    yield '\v'
+                elif c == 'b':
+                    yield '\b'
+                elif c == 'r':
+                    yield '\r'
+                elif c == 'f':
+                    yield '\f'
+                elif c == 'a':
+                    yield '\a'
+                elif c == '\\':
+                    yield '\\'
+                elif c == '?':
+                    yield '?'
+                elif c == "'":
+                    yield "'"
+                elif c == '"':
+                    yield '"'
+                elif c in octdigits:
+                    octstr = c
+                    c = self.expect_char_peek(what)
+                    if c in octdigits:
+                        octstr += c
+                        self.stream.advance()
+                        c = self.expect_char_peek(what)
+                        if c in octdigits:
+                            octstr += c
+                            self.stream.advance()
+                    yield int(octstr, base=8)
+                elif c == 'x':
+                    yield self.hex_escape(2)
+                elif c == 'u':
+                    if not is_wide:
+                        raise ParseError(self.stream.loc(),
+                            'Can\'t use \\u escape in a non-wide string or character literal')
+                    yield self.hex_escape(4)
+                else:
+                    raise ParseError(self.stream.loc(), 'Invalid escape {}', repr(c))
+            elif is_string and c == '\"':
+                break
+            elif not is_string and c == "'":
+                break
+            else:
+                yield c
 
     @nontrivial_rule
     def m_string_literal(self):
         self.m_exact('"', ws_after=False)
-        rv = self._regex(self.string_re)
-        self.m_exact('"', ws_before=False)
+        rv = ''.join(self.get_character_literal(is_string=True))
+        self.m_ws_after()
         return rv
 
     def m_begin_scope(self):
