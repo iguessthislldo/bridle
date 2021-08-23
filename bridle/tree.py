@@ -1,58 +1,228 @@
-from enum import Enum, unique
+import sys
+from enum import Enum, unique, auto
 from dataclasses import dataclass
+import re
 
-from .utils import is_sequence
+from .utils import is_sequence, Location
+from .errors import BridleError  # , RedefintionError
+
+# TODO: Seperate IDL processing into sepearte file?
+
+
+class ScopedName:
+    # Don't use \d because we don't want it to match non-ASCII digits
+    # Keep consistent with m_identifier
+    idl_re = re.compile(r'(::)?([^0-9\W]\w*(?:::[^0-9\W]\w*)*)')
+
+    def __init__(self, parts=None, absolute=True):
+        self.parts = parts
+        self.absolute = absolute
+
+    @classmethod
+    def from_idl(cls, idl):
+        m = cls.idl_re.fullmatch(idl)
+        if m:
+            return cls(m.group(2).split('::'), m.group(1) is not None)
+        raise BridleError('Invalid scoped IDL name: {}', repr(idl))
+
+    def __repr__(self):
+        name = '::'.join(self.parts)
+        if self.absolute:
+            name = '::' + name
+        return name
+
+    def __str__(self):
+        return repr(self)
+
+
+class Action(Enum):
+    add = auto()
+    ignore = auto()
+    # TODO: Other actions? merge, replace?
 
 
 class Node:
 
-    def __init__(self, name=None, parent=None):
+    def __init__(self, name=None, parent=None, loc=None):
         self.name = name
+        self.scoped_name = None
         self.parent = parent
-        self.raw_contents = []
+        self.loc = loc
+        self.tree = None
+        self.def_index = None
 
-    def add_raw(self, content):
-        if is_sequence(content):
-            self.raw_contents.extend(content)
-        else:
-            self.raw_contents.append(content)
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, new):
+        self._name = str(new) if new else None
+
+    # Only Usable in Syntactic Phase ------------------------------------------
+
+    def set_tree(self, tree, parent_scoped_name):
+        self.tree = tree
+        self.def_index = tree.get_next_def_index()
+        # Note: We can use the parent_name to get scoped_name here, but we
+        # can't set parent until we finalize the exact node object
+        # relationships in emplace_phase.
+        assert parent_scoped_name is not None
+        assert self.name is not None
+        self.scoped_name = ScopedName(parent_scoped_name.parts + [self.name])
+
+    # Semantic Phases ---------------------------------------------------------
+
+    def handle_possible_redefintion(self, new_node):
+        # TODO
+        # self.tree.new_error(RedefintionError(self.name, self.loc, new_node.loc))
+        return Action.ignore
+
+    def emplace_phase(self):
+        '''\
+        This phase does basic checks on the children and moves them into
+        Node-specific structures. As part of this nodes get their full names,
+        modules nodes that are the same namespace are merged and checks for
+        redefintion errors happen.
+        '''
+        raise NotImplementedError
+
+    # Only Usable After Semantic Phases ---------------------------------------
 
     def accept(self, visitor):
         raise NotImplementedError
 
-    def repr_name(self):
-        if self.name:
-            return '::' + self.name.join('::')
+    # repr --------------------------------------------------------------------
 
-    def repr_template(self, fmt='', *args):
+    def repr_template(self, fmt='', *args, short=False):
         info = ''
-        name = self.repr_name()
-        if name:
-            info += ' ' + name
+        if self.name:
+            info += ' ' + self.name
         if fmt:
             info += ': ' + fmt.format(*args)
-        return '<{}{}>'.format(self.__class__.__name__, info)
+        cls = self.__class__.__name__
+        if short and cls.endswith('Node'):
+            cls = cls[:-4]
+        return '<{}{}>'.format(cls, info)
+
+    def _repr(self, short):
+        return self.repr_template(short=short)
 
     def __repr__(self):
-        return self.repr_template()
+        return self._repr(False)
+
+    def short_repr(self):
+        return self._repr(True)
+
+    def dump(self, level=0):
+        print('  ' * level, self.short_repr(), sep='')
 
 
-class ModuleNode(Node):
+class ContainerNode(Node):
 
-    def __init__(self, name=None, parent=None):
-        super().__init__(name, parent)
-        self.submodules = {}
-        self.types = {}
+    def __init__(self, name=None, parent=None, loc=None):
+        super().__init__(name, parent, loc)
+        self.children = []
+        self.children_dict = None
+
+    def add_child(self, child):
+        if is_sequence(child):
+            self.add_children(child)
+        else:
+            self.children.append(child)
+            if self.tree is not None:
+                child.set_tree(self.tree, self.scoped_name)
+
+    def add_children(self, children):
+        self.children.extend(children)
+        if self.tree is not None:
+            for child in children:
+                child.set_tree(self.tree, self.scoped_name)
+
+    def set_tree(self, tree, parent_scoped_name):
+        super().set_tree(tree, parent_scoped_name)
+        for child in self.children:
+            child.set_tree(tree, self.scoped_name)
+
+    def emplace_nodes(self, nodes):
+        if self.children_dict is None:
+            self.children_dict = {}
+        for node in nodes:
+            add = True
+            existing = self.children_dict.get(node.name)
+            if existing is not None:
+                action = existing.handle_possible_redefintion(node)
+                add = action == Action.add
+            if add:
+                self.children_dict[node.name] = node
+                node.parent = self
+                if isinstance(node, ContainerNode):
+                    node.emplace_phase()
+
+    def get(self, scoped_name):
+        if isinstance(scoped_name, str):
+            scoped_name = ScopedName.from_idl(scoped_name)
+        node = self.children_dict[scoped_name.parts[0]]
+        if len(scoped_name.parts) == 1:
+            return node
+        get_scoped_name = ScopedName(scoped_name.parts[1:], absolute=False)
+        if not isinstance(node, ContainerNode):
+            raise BridleError('{} can\'t have any children like {}',
+                node.scoped_name, get_scoped_name)
+        return node.get(get_scoped_name)
+
+    def emplace_phase(self):
+        self.emplace_nodes(self.children)
 
     def accept(self, visitor):
-        for type_node in self.types.values():
-            type_node.accept(visitor)
+        for child in self.children.values():
+            child.accept(visitor)
 
-        for submodule in self.submodules.values():
-            visitor.visit_module(submodule)
+    def dump(self, level=0):
+        super().dump(level)
+        level += 1
+        for child in self.children:
+            child.dump(level)
 
-    def repr_name(self):
-        return self.name if self.name else ':: (Root Module)'
+
+class ModuleNode(ContainerNode):
+    # TODO: Handle merging modules
+    pass
+
+
+class Tree(ModuleNode):
+
+    def __init__(self, loc, raise_on_first_error=False):
+        super().__init__(loc=Location(loc, source_only=True))
+        self.raise_on_first_error = raise_on_first_error
+        self.errors = []
+        self.next_def_index = 0
+        self.tree = self
+        self.scoped_name = ScopedName([])
+
+    def get_next_def_index(self):
+        index = self.next_def_index
+        self.next_def_index += 1
+        return index
+
+    def new_error(self, error):
+        if self.raise_on_first_error:
+            raise error
+        self.errors.append(error)
+
+    def report_errors(self, errors):
+        for error in errors:
+            print(str(error), file=sys.stderr)
+
+    def finalize(self):
+        self.emplace_phase()
+
+        if self.errors:
+            self.report_errors(self.errors)
+            raise BridleError('Semantic errors were found')
+
+    def _repr(self, short):
+        return self.repr_template('{}', self.loc, short=short)
 
 
 @dataclass(frozen=True)
@@ -139,11 +309,11 @@ class PrimitiveNode(Node):
     def is_raw(self):
         return self.value.is_raw
 
-    def __repr__(self):
+    def _repr(self, short):
         contents = self.kind.name
         if self.element_count_limit:
             contents += ' max {}'.format(self.element_count_limit)
-        return self.repr_template(contents)
+        return self.repr_template(contents, short=short)
 
 
 class FieldNode(Node):
@@ -153,11 +323,11 @@ class FieldNode(Node):
         self.type_node = type_node
         self.optional = optional
 
-    def __repr__(self):
-        return self.repr_template(repr(self.type_node))
+    def _repr(self, short):
+        return self.repr_template(repr(self.type_node), short=short)
 
 
-class StructNode(Node):
+class StructNode(ContainerNode):
 
     def __init__(self, name=None):
         super().__init__(name=name)
@@ -170,7 +340,12 @@ class StructNode(Node):
         visitor.visit_struct(self)
 
 
-class EnumNode(Node):
+class EnumeratorNode(Node):
+    pass
+
+
+class EnumNode(ContainerNode):
+    # TODO: The members should be nodes themselves like StructNode
 
     def __init__(self, size=None):
         super().__init__()
@@ -178,16 +353,11 @@ class EnumNode(Node):
         self.members = {}
         self.default_member = None
 
-    def add_member(self, name, value):
-        self.members[name] = value
-        if self.default_member is None:
-            self.default_member = name
-
     def accept(self, visitor):
         visitor.visit_enum(self)
 
-    def __repr__(self):
-        return self.repr_template('{} bits', self.size)
+    def _repr(self, short):
+        return self.repr_template('{} bits', self.size, short=short)
 
 
 class ArrayNode(Node):
@@ -200,9 +370,10 @@ class ArrayNode(Node):
     def accept(self, visitor):
         visitor.visit_array(self)
 
-    def __repr__(self):
+    def _repr(self, short):
         return self.repr_template(
-            repr(self.base_type) + ''.join(["[{}]".format(i) for i in self.dimensions]))
+            repr(self.base_type) + ''.join(["[{}]".format(i) for i in self.dimensions]),
+            short=short)
 
 
 class SequenceNode(Node):
@@ -215,34 +386,37 @@ class SequenceNode(Node):
     def accept(self, visitor):
         visitor.visit_sequence(self)
 
-    def __repr__(self):
+    def _repr(self, short):
         return self.repr_template(repr(self.base_type) + " {}",
-            "max " + str(self.max_count) if self.max_count else "no max")
+            "max " + str(self.max_count) if self.max_count else "no max", short=short)
 
 
 class ConstantNode(Node):
 
-    def __init__(self, the_type):
-        self.the_type = the_type
+    def __init__(self, primitive_node):
+        super().__init__()
+        self.primitive_node = primitive_node
         self.value = None
 
     def accept(self, visitor):
         visitor.visit_constant(self)
 
-    def __repr__(self):
-        return self.repr_template('{} = {}', repr(self.the_type), repr(self.value))
+    def _repr(self, short):
+        return self.repr_template(
+            '{} = {}', repr(self.primitive_node), repr(self.value), short=short)
 
 
-class UnionNode(Node):
+class UnionNode(ContainerNode):
 
     def __init__(self):
+        super().__init__()
         self.disc_type = None
 
     def accept(self, visitor):
         visitor.visit_union(self)
 
-    def __repr__(self):
-        return self.repr_template('{}', repr(self.disc_type))
+    def _repr(self, short):
+        return self.repr_template('{}', repr(self.disc_type), short=short)
 
 
 class TypedefNode(Node):
@@ -254,8 +428,8 @@ class TypedefNode(Node):
     def accept(self, visitor):
         visitor.visit_typedef(self)
 
-    def __repr__(self):
-        return self.repr_template('{}', repr(self.base_type))
+    def _repr(self, short):
+        return self.repr_template('{}', repr(self.base_type), short=short)
 
 
 class NodeVisitor:

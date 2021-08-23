@@ -1,128 +1,21 @@
 from pathlib import Path
-import re
 from io import StringIO
-import enum
-from string import hexdigits, octdigits
 
 from pcpp import Preprocessor
 
-from .utils import PeekIter, ChainedIter, Location, is_sequence
-from .errors import BridleError, ParseError
+from .utils import Location, is_sequence
+from .errors import ErrorsReported, ExpectedError
 from . import tree
-
-macro_regex = re.compile(r'^\s*#.*$')
-line_regex = re.compile(r'\s*#line (\d+)(?: "(.*)")?')
-
-
-class Keyword:
-    def __init__(self, value):
-        self.value = value
-
-    def __str__(self):
-        return self.value
-
-    def __repr__(self):
-        return '<Keyword: {}>'.format(repr(self.value))
-
-
-class Token(enum.Enum):
-    begin_scope = enum.auto()
-    end_scope = enum.auto()
-    SHORT = Keyword('short')
-    LONG = Keyword('long')
-    INT8 = Keyword('int8')
-    UINT8 = Keyword('uint8')
-    INT16 = Keyword('int16')
-    UINT16 = Keyword('uint16')
-    INT32 = Keyword('int32')
-    UINT32 = Keyword('uint32')
-    INT64 = Keyword('int64')
-    UINT64 = Keyword('uint64')
-    ABSTRACT = Keyword('abstract')
-    ANY = Keyword('any')
-    ALIAS = Keyword('alias')
-    ATTRIBUTE = Keyword('attribute')
-    BITFIELD = Keyword('bitfield')
-    BITMASK = Keyword('bitmask')
-    BITSET = Keyword('bitset')
-    BOOLEAN = Keyword('boolean')
-    CASE = Keyword('case')
-    CHAR = Keyword('char')
-    COMPONENT = Keyword('component')
-    CONNECTOR = Keyword('connector')
-    CONST = Keyword('const')
-    CONSUMES = Keyword('consumes')
-    CONTEXT = Keyword('context')
-    CUSTOM = Keyword('custom')
-    DEFAULT = Keyword('default')
-    DOUBLE = Keyword('double')
-    EXCEPTION = Keyword('exception')
-    EMITS = Keyword('emits')
-    ENUM = Keyword('enum')
-    EVENTTYPE = Keyword('eventtype')
-    FACTORY = Keyword('factory')
-    FALSE = Keyword('FALSE')
-    FINDER = Keyword('finder')
-    FIXED = Keyword('fixed')
-    FLOAT = Keyword('float')
-    GETRAISES = Keyword('getraises')
-    HOME = Keyword('home')
-    IMPORT = Keyword('import')
-    IN = Keyword('in')
-    INOUT = Keyword('inout')
-    INTERFACE = Keyword('interface')
-    LOCAL = Keyword('local')
-    MANAGES = Keyword('manages')
-    MAP = Keyword('map')
-    MIRRORPORT = Keyword('mirrorport')
-    MODULE = Keyword('module')
-    MULTIPLE = Keyword('multiple')
-    NATIVE = Keyword('native')
-    OBJECT = Keyword('Object')
-    OCTET = Keyword('octet')
-    ONEWAY = Keyword('oneway')
-    OUT = Keyword('out')
-    PRIMARYKEY = Keyword('primarykey')
-    PRIVATE = Keyword('private')
-    PORT = Keyword('port')
-    PORTTYPE = Keyword('porttype')
-    PROVIDES = Keyword('provides')
-    PUBLIC = Keyword('public')
-    PUBLISHES = Keyword('publishes')
-    RAISES = Keyword('raises')
-    READONLY = Keyword('readonly')
-    SETRAISES = Keyword('setraises')
-    SEQUENCE = Keyword('sequence')
-    STRING = Keyword('string')
-    STRUCT = Keyword('struct')
-    SUPPORTS = Keyword('supports')
-    SWITCH = Keyword('switch')
-    TRUE = Keyword('TRUE')
-    TRUNCATABLE = Keyword('truncatable')
-    TYPEDEF = Keyword('typedef')
-    TYPEID = Keyword('typeid')
-    TYPENAME = Keyword('typename')
-    TYPEPREFIX = Keyword('typeprefix')
-    UNSIGNED = Keyword('unsigned')
-    UNION = Keyword('union')
-    USES = Keyword('uses')
-    VALUEBASE = Keyword('ValueBase')
-    VALUETYPE = Keyword('valuetype')
-    VOID = Keyword('void')
-    WCHAR = Keyword('wchar')
-    WSTRING = Keyword('wstring')
-
-
-keywords = {}
-for name, value in Token.__members__.items():
-    if isinstance(value.value, Keyword):
-        keywords[str(value.value)] = value.value
+from .parser import Parser, nontrivial_rule
+from .idl_tokenize import IdlTokenizer, Token, TokenKind, dump_tokens, \
+    set_location_from_line_statement
+from .logging import print_location_error
 
 
 class IdlFile:
     def __init__(self, path=None, direct_input=None):
         if direct_input is not None and path is None:
-            self.path = 'DIRECT_INPUT'
+            self.path = '__DIRECT_INPUT__'
             self.idl_file_contents = direct_input
         elif path is not None and direct_input is None:
             self.path = Path(path)
@@ -133,93 +26,21 @@ class IdlFile:
         self.positions = []
 
     def name(self):
-        return str(self.path)
+        return self.path
 
     def load(self, preprocessor):
         sio = StringIO()
         preprocessor.parse(self.idl_file_contents, str(self.path))
         preprocessor.write(sio)
         if preprocessor.return_code != 0:
-            raise BridleError('Encounted Preprocessor Error(s)')
+            raise ErrorsReported()
         self.contents = sio.getvalue()
 
-
-class Stream:
-    def __init__(self, source, name):
-        self.iters = [PeekIter(source)]
-        self.locs = [Location(filename=name)]
-        self.furthest_errors = [None]
-        self.furthest_error_locs = [Location(filename=name)]
-        self.in_annotation = False
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        rv = self.peek()
-        if rv:
-            self.advance()
-            return rv
-        raise StopIteration
-
-    def done(self):
-        return self.iters[-1].done()
-
-    def peek(self, count=1):
-        return ''.join(self.iters[-1].peek(count))
-
-    def loc(self, value=None):
-        if value is not None:
-            self.locs[-1] = value
-            return value
-        return self.locs[-1]
-
-    def advance(self, arg=1, loc=None):
-        chars = self.iters[-1].advance(arg)
-        if loc is None:
-            self.loc().advance(''.join(chars))
-        else:
-            self.locs[-1] = Location(loc)
-
-    def push(self):
-        self.iters.append(ChainedIter(self.iters[-1]))
-        self.locs.append(Location(self.loc()))
-        self.furthest_errors.append(self.furthest_errors[-1])
-        self.furthest_error_locs.append(Location(self.furthest_error_locs[-1]))
-
-    def pop(self):
-        return (
-            self.iters.pop(),
-            self.locs.pop(),
-            self.furthest_errors.pop(),
-            self.furthest_error_locs.pop(),
-        )
-
-    def accept(self):
-        it, loc, error, error_loc = self.pop()
-        self.advance(it, loc)
-        return it, loc, error, error_loc
-
-    def check_furthest_error_candidate(self, error):
-        if error.location > self.furthest_error_locs[-1]:
-            self.furthest_errors[-1] = error
-            self.furthest_error_locs[-1] = error.location
-
-    def reject(self, this_error):
-        it, loc, popped_error, error_loc = self.pop()
-        self.check_furthest_error_candidate(this_error)
-        if popped_error is not None:
-            self.check_furthest_error_candidate(popped_error)
-        return it, loc, popped_error, error_loc
-
-    def furthest_error(self, root_error):
-        if self.furthest_error_locs[0] > root_error.location and \
-                self.furthest_errors[0] is not None:
-            return self.furthest_errors[0]
-        return None
+    def get_line(self, lineno):
+        return self.idl_file_contents.split('\n')[lineno - 1]
 
 
-class NameMaybeArray:
+class Declarator:
     def __init__(self, name, array_dims=None):
         self.name = name
         self.array_dims = array_dims
@@ -229,10 +50,16 @@ class NameMaybeArray:
             else tree.ArrayNode(base_type, self.array_dims)
 
 
-class IdlParser:
+class IdlParser(Parser):
     default_default_settings = dict(
-        includes=[], defines=[], dump_raw_tree=False, dump_tree=False,
-        warn_about_unsupported_annotations=True)
+        includes=[], defines=[],
+        warn_about_unsupported_annotations=True,
+        debug_all=False,
+        dump_pp_output=False,
+        debug_tokenizer=False, dump_tokens=False,
+        debug_parser=False, dump_raw_tree=False, dump_tree=False,
+        raise_parse_errors=False,
+    )
 
     def __init__(self, **kw):
         self.default_settings = self.default_default_settings
@@ -244,92 +71,70 @@ class IdlParser:
             '_IDL_VERSION_MAJOR=4',
             '_IDL_VERSION_MINOR=2',
         ]])
+        self.tokenizer = IdlTokenizer()
+        self.tree = None
+
+    def parse_idl(self, settings, idl_file):
+        # Preprocessor Phase
+        preprocessor = Preprocessor()
+        for include in settings['includes']:
+            preprocessor.add_path(include)
+        for define in self.builtin_defines + settings['defines']:
+            preprocessor.define(define.replace('=', ' ', 1))
+        idl_file.load(preprocessor)
+        if settings['dump_pp_output']:
+            print(idl_file.contents)
+
+        # Parse the Text into Tokens
+        if settings['raise_parse_errors']:
+            location_error_handler = None
+        else:
+            def location_error_handler(self, error):
+                print_location_error(error, idl_file.get_line(error.location.line))
+                raise ErrorsReported()
+        name = idl_file.name()
+        tokens = self.tokenizer.tokenize(idl_file.contents, name,
+            debug=settings['debug_tokenizer'],
+            parse_error_handler=location_error_handler,
+        )
+        if settings['dump_tokens']:
+            dump_tokens(tokens)
+
+        # Parse the Tokens into a Tree
+        root = self._parse(tokens, name, over_chars=False,
+            debug=settings['debug_parser'],
+            parse_error_handler=location_error_handler)
+        if settings['dump_raw_tree']:
+            root.dump()
+
+        # Process the Raw Tree
+        root.finalize()
+        if settings['dump_tree']:
+            root.dump()
+
+        return root
 
     def parse(self, paths=[], direct_inputs=[], **kw):
         settings = self.default_settings.copy()
         settings.update(kw)
+        if settings['debug_all']:
+            settings['dump_pp'] = True
+            settings['debug_tokenizer'] = True
+            settings['dump_tokens'] = True
+            settings['debug_parser'] = True
+            settings['dump_raw_tree'] = True
+            settings['dump_tree'] = True
+
         idl_files = [IdlFile(path=path) for path in paths] + \
             [IdlFile(direct_input=s) for s in direct_inputs]
-        rv = []
+        roots = []
         for idl_file in idl_files:
-            preprocessor = Preprocessor()
-            for include in settings['includes']:
-                preprocessor.add_path(include)
-            for define in self.builtin_defines + settings['defines']:
-                preprocessor.define(define.replace('=', ' ', 1))
-            idl_file.load(preprocessor)
-            rv.append(self._parse(idl_file.contents, idl_file.name()))
-        return rv
-
-    def _parse(self, source, name):
-        self.source = source
-        self.stream = Stream(source, name)
-        furthest_error = None
-        try:
-            rv = self.start()
-        except ParseError as e:
-            furthest_error = self.stream.furthest_error(e)
-            if furthest_error is None:
-                raise
-        if furthest_error is not None:
-            raise furthest_error
-        self.assert_end()
-        return rv
-
-    def assert_not_end(self, what):
-        if self.stream.done():
-            raise ParseError(self.stream.loc(),
-                'Expected {}, but reached end of input', ' or '.join(what))
-
-    def assert_end(self):
-        if not self.stream.done():
-            raise ParseError(self.stream.loc(),
-                'Expected end of input, but got {}', repr(self.stream.peek()))
-
-    def rule_wrapper(self, func, name, maybe, *args, **kwargs):
-        # print('| ' * (len(self.stream.iters) - 1) + name, args, kwargs, self.stream.loc())
-        self.stream.push()
-        try:
-            rv = func(*args, **kwargs) if maybe else func(self, *args, **kwargs)
-            it, loc, error, error_loc = self.stream.accept()
-            # print('| ' * (len(self.stream.iters) - 1) + 'ACCEPT', loc)
-            return rv
-        except ParseError as e:
-            self.stream.reject(e)
-            # print('| ' * (len(self.stream.iters) - 1) + 'REJECT:',
-            #     e, self.stream.furthest_error_locs[-1])
-            if maybe:
-                return None
-            raise
-
-    def nontrivial_rule(method):
-        return lambda self, *args, **kwargs: self.rule_wrapper(
-            method, method.__name__[2:], False, *args, **kwargs)
-
-    def __getattr__(self, name):
-        maybe = name.endswith('_maybe')
-        if maybe:
-            name = name[:-6]
-        obj = object.__getattribute__(self, name)
-        if maybe:
-            return lambda *args, **kwargs: self.rule_wrapper(obj, name, True, *args, **kwargs)
-        return obj
-
-    def match(self, rules):
-        if isinstance(rules, str):
-            rules = {rules: []}
-        elif not isinstance(rules, dict):
-            rules = {rule: [] for rule in rules}
-        for rule, args in rules.items():
-            try:
-                return getattr(self, 'm_' + rule)(*args)
-            except ParseError:
-                pass
-        raise ParseError(self.stream.loc(), 'Expected ' + ' or '.join(rules))
+            roots.append(self.parse_idl(settings, idl_file))
+        return roots
 
     def comma_list_of(self, element_rules):
         rv = [self.match(element_rules)]
-        while self.m_exact_maybe(',') is not None:
+        while self.m_token_maybe(TokenKind.comma) is not None:
             rv.append(self.match(element_rules))
         return rv
 
@@ -343,203 +148,102 @@ class IdlParser:
 
     def _ws(self, *, annotations=True):
         while not self.stream.done():
-            c = self.stream.peek()
-            if c.isspace():
+            t = self.stream.peek()[0]
+            if t.is_ws():
                 self.stream.advance()
-            elif c == '#':  # TODO: Make sure this is a valid location?
-                pps = self.get_preprocessor_statement()
-                m = line_regex.fullmatch(pps)
-                if m:
-                    self.stream.loc().set_line(m.group(2), int(m.group(1)))
-            elif c == '@' and annotations and not self.stream.in_annotation:
-                self.m_annotation_appl()
-                # TODO: Connect to setting
-                # print('Ignored Annotation:', appl)
+            elif t.kind is TokenKind.preprocessor_statement:
+                self.stream.advance()
+                set_location_from_line_statement(self.stream.loc(), t.text)
+            # elif c == '#':  # TODO: Make sure this is a valid location?
+            #     pps = self.get_preprocessor_statement()
+            #     m = line_regex.fullmatch(pps)
+            #     if m:
+            #         self.stream.loc().set_line(m.group(2), int(m.group(1)))
+            # elif c == '@' and annotations and not self.stream.in_annotation:
+            #     self.m_annotation_appl()
+            #     # TODO: Connect to setting
+            #     # print('Ignored Annotation:', appl)
             else:
                 break
 
-    @nontrivial_rule
     def m_ws_before(self):
         self._ws(annotations=True)
 
-    @nontrivial_rule
     def m_ws_after(self):
         self._ws(annotations=False)
 
     @nontrivial_rule
-    def m_exact(self, *strings, ws_before=True, ws_after=True):
+    def m_token(self, *token_kinds, ws_before=True, ws_after=True):
         if ws_before:
             self.m_ws_before()
-        help_strings = [repr(i) for i in strings]
+        help_strings = [str(tk) for tk in token_kinds]
         self.assert_not_end(help_strings)
-        m = 0
-        for string in strings:
-            l = len(string)
-            m = max(m, l)
-            if self.stream.peek(l) == string:
-                self.stream.advance(l)
-                if ws_after:
-                    self.m_ws_after()
-                return string
-        raise ParseError(self.stream.loc(), 'Expected {}, but got {}',
-            ' or '.join(help_strings), repr(self.stream.peek(m)))
+        loc = Location(self.stream.loc())
+        token = next(self.stream)[0]
+        if token.kind not in token_kinds:
+            loc.set_length(token)
+            raise ExpectedError(loc, help_strings, repr(token))
+        if ws_after:
+            self.m_ws_after()
+        return token
 
     @nontrivial_rule
-    def m_exact_seqs(self, string_seqs, ws_before=True, ws_after=True):
-        string_seqs = {(k,) if not is_sequence(k) else k: v for k, v in string_seqs.items()}
-        help_strings = [repr(' '.join(i)) for i in string_seqs.keys()]
+    def m_token_seq(self, token_seq, result):
+        for token in token_seq:
+            self.m_token(token)
+        return result
+
+    @nontrivial_rule
+    def m_token_seqs(self, token_seqs):
+        token_seqs = {(k,) if not is_sequence(k) else k: v for k, v in token_seqs.items()}
+        help_strings = [repr(' '.join([str(k) for k in i])) for i in token_seqs.keys()]
+        loc = Location(self.stream.loc())
         rv = None
-        m = 0
-        for string_seq, token in string_seqs.items():
-            matched = True
-            l = 0
-            for string in string_seq:
-                l += len(string)
-                if self.m_exact_maybe(string) is None:
-                    matched = False
-                    break
-            m = max(m, l)
-            if matched:
-                rv = token
+        for token_seq, result in token_seqs.items():
+            rv = self.m_token_seq_maybe(token_seq, result)
+            if rv is not None:
                 break
         if rv is None:
-            raise ParseError(self.stream.loc(), 'Expected {}, but got {}',
-                ' or '.join(help_strings), repr(self.stream.peek(m)))
-        return rv
-
-    def _regex(self, r, what=None):
-        self.assert_not_end(what)
-        first = True
-        rv = ''
-        while True:
-            if not self.stream.done():
-                char = self.stream.peek()
-                if r.match(char):
-                    rv += char
-                    self.stream.advance()
-                elif first and what is not None:
-                    raise ParseError(self.stream.loc(),
-                        'Expected {}, but got {}', ' or '.join(what), repr(char))
-                else:
-                    break
-                first = False
-        return rv
-
-    id_start_re = re.compile(r'[^\d\W]')
-    id_rest_re = re.compile(r'\w')
-
-    @nontrivial_rule
-    def m_identifier(self, what=['identifier']):
-        self.m_ws_before()
-        rv = self._regex(self.id_start_re, what) + self._regex(self.id_rest_re)
-        if rv in keywords:
-            raise ParseError(self.stream.loc(),
-                'Expected {}, but got keyword {}', ' or '.join(what), repr(rv))
-        self.m_ws_after()
+            raise ExpectedError(loc, help_strings, self.stream.peek())
         return rv
 
     @nontrivial_rule
-    def m_integer_literal(self, what=['integer literal']):
-        self.m_ws_before()
-        rv = self._regex(re.compile(r'\d'), what)
-        self.m_ws_after()
-        return rv
+    def m_boolean_literal(self):
+        return self.m_token(TokenKind.boolean).value
 
-    def expect_char(self, what):
-        self.assert_not_end(what)
-        return next(self.stream)
+    @nontrivial_rule
+    def m_identifier(self):
+        return self.m_token(TokenKind.identifier).text
 
-    def expect_char_peek(self, what):
-        self.assert_not_end(what)
-        return self.stream.peek()
+    @nontrivial_rule
+    def m_floating_pt_literal(self):
+        return self.m_token(TokenKind.floating_point).value
 
-    def hex_escape(self, maxlen):
-        what = ['hex escape']
-        c = self.expect_char(what)
-        if c not in hexdigits:
-            raise ParseError(self.stream.loc(),
-                '{} is not a valid hexadecimal digit', repr(c))
-        hexstr = c
-        for i in range(maxlen - 1):
-            c = self.expect_char_peek(what)
-            if c in hexdigits:
-                hexstr += c
-                self.stream.advance()
-            else:
-                break
-        return ord(int(hexstr, base=16))
+    @nontrivial_rule
+    def m_integer_literal(self):
+        return self.m_token(TokenKind.integer).value
 
-    def get_character_literal(self, is_string=False, is_wide=False):
-        # Spec says we shouldn't allow zero value, we will allow it because not
-        # all languages have null terminated strings.
-        what = ['part of string']
-        while True:
-            c = self.expect_char(what)
-            if c == '\\':
-                c = self.expect_char(what)
-                if c == 'n':
-                    yield '\n'
-                elif c == 't':
-                    yield '\t'
-                elif c == 'v':
-                    yield '\v'
-                elif c == 'b':
-                    yield '\b'
-                elif c == 'r':
-                    yield '\r'
-                elif c == 'f':
-                    yield '\f'
-                elif c == 'a':
-                    yield '\a'
-                elif c == '\\':
-                    yield '\\'
-                elif c == '?':
-                    yield '?'
-                elif c == "'":
-                    yield "'"
-                elif c == '"':
-                    yield '"'
-                elif c in octdigits:
-                    octstr = c
-                    c = self.expect_char_peek(what)
-                    if c in octdigits:
-                        octstr += c
-                        self.stream.advance()
-                        c = self.expect_char_peek(what)
-                        if c in octdigits:
-                            octstr += c
-                            self.stream.advance()
-                    yield int(octstr, base=8)
-                elif c == 'x':
-                    yield self.hex_escape(2)
-                elif c == 'u':
-                    if not is_wide:
-                        raise ParseError(self.stream.loc(),
-                            'Can\'t use \\u escape in a non-wide string or character literal')
-                    yield self.hex_escape(4)
-                else:
-                    raise ParseError(self.stream.loc(), 'Invalid escape {}', repr(c))
-            elif is_string and c == '\"':
-                break
-            elif not is_string and c == "'":
-                break
-            else:
-                yield c
+    @nontrivial_rule
+    def m_character_literal(self):
+        return self.m_token(TokenKind.char).value
+
+    @nontrivial_rule
+    def m_wide_character_literal(self):
+        return self.m_token(TokenKind.wchar).value
 
     @nontrivial_rule
     def m_string_literal(self):
-        self.m_exact('"', ws_after=False)
-        rv = ''.join(self.get_character_literal(is_string=True))
-        self.m_ws_after()
-        return rv
+        return self.m_token(TokenKind.string).value
+
+    @nontrivial_rule
+    def m_wide_string_literal(self):
+        return self.m_token(TokenKind.wstring).value
 
     def m_begin_scope(self):
-        self.m_exact('{')
-        return Token.begin_scope
+        return self.m_token(TokenKind.lbrace)
 
     def m_end_scope(self):
-        self.m_exact('}')
-        return Token.end_scope
+        return self.m_token(TokenKind.rbrace)
 
     # =========================================================================
     # The methods below should follow the names and order of the grammar rules
@@ -547,9 +251,9 @@ class IdlParser:
     # =========================================================================
 
     def start(self):
-        root = tree.ModuleNode()
+        root = tree.Tree(self.stream.loc())
         while not self.stream.done():
-            root.add_raw(self.m_definition())
+            root.add_child(self.m_definition())
         return root
 
     # Building Block Core Data Types ==========================================
@@ -561,42 +265,42 @@ class IdlParser:
             'const_dcl',
             'type_dcl',
         ))
-        self.m_exact(';')
+        self.m_token(TokenKind.semicolon)
         return rv
 
     @nontrivial_rule
     def m_module_dcl(self):
-        self.m_exact('module')
+        self.m_token(TokenKind.MODULE)
         module = tree.ModuleNode(self.m_identifier())
         self.m_begin_scope()
-        module.add_raw(self.m_definition())
+        module.add_child(self.m_definition())
         while True:
             what = self.match((
                 'definition',
                 'end_scope',
             ))
-            if what == Token.end_scope:
+            if isinstance(what, Token) and what.kind == TokenKind.rbrace:
                 break
-            module.add_raw(what)
+            module.add_child(what)
         return module
 
     @nontrivial_rule
     def m_scoped_name(self):
         rv = []
-        absolute = self.m_exact_maybe('::')
+        absolute = self.m_token_maybe(TokenKind.scope_sep)
         if absolute:
             rv.append(absolute)
         rv.append(self.m_identifier())
-        while self.m_exact_maybe('::'):
+        while self.m_token_maybe(TokenKind.scope_sep):
             rv.append(self.m_identifier())
         return rv
 
     @nontrivial_rule
     def m_const_dcl(self):
-        self.m_exact('const')
+        self.m_token(TokenKind.CONST)
         constant = tree.ConstantNode(self.m_const_type())
         constant.name = self.m_identifier()
-        self.m_exact('=')
+        self.m_token(TokenKind.equals)
         constant.value = self.m_const_expr()
         return constant
 
@@ -618,13 +322,20 @@ class IdlParser:
         ))
 
     @nontrivial_rule
-    def m_const_expr(self):
-        # TODO: Real const_expr Grammer
+    def m_literal(self):
         return self.match((
             'integer_literal',
+            'floating_pt_literal',
+            # TODO: 'fixed_pt_literal',
+            'character_literal',
+            'wide_character_literal',
+            'boolean_literal',
             'string_literal',
-            'scoped_name',
+            'wide_string_literal',
         ))
+
+    def m_const_expr(self):
+        return self.m_literal()
 
     def m_positive_int_const(self):
         return self.m_const_expr()
@@ -666,45 +377,46 @@ class IdlParser:
 
     @nontrivial_rule
     def m_floating_pt_type(self):
-        return tree.PrimitiveNode(self.m_exact_seqs({
-            'float': tree.PrimitiveNode.Kind.f32,
-            'double': tree.PrimitiveNode.Kind.f64,
-            ('long', 'double'): tree.PrimitiveNode.Kind.f128,
+        return tree.PrimitiveNode(self.m_token_seqs({
+            TokenKind.FLOAT: tree.PrimitiveNode.Kind.f32,
+            TokenKind.DOUBLE: tree.PrimitiveNode.Kind.f64,
+            (TokenKind.LONG, TokenKind.DOUBLE): tree.PrimitiveNode.Kind.f128,
         }))
 
     @nontrivial_rule
     def m_integer_type(self):
-        return tree.PrimitiveNode(self.m_exact_seqs({
-            'int8': tree.PrimitiveNode.Kind.i8,
-            'uint8': tree.PrimitiveNode.Kind.u8,
-            'int16': tree.PrimitiveNode.Kind.i16,
-            'short': tree.PrimitiveNode.Kind.i16,
-            'uint16': tree.PrimitiveNode.Kind.u16,
-            ('unsigned', 'short'): tree.PrimitiveNode.Kind.u16,
-            'int32': tree.PrimitiveNode.Kind.i32,
-            'long': tree.PrimitiveNode.Kind.i32,
-            'uint32': tree.PrimitiveNode.Kind.u32,
-            ('unsigned', 'long'): tree.PrimitiveNode.Kind.u32,
-            'int64': tree.PrimitiveNode.Kind.i64,
-            ('long', 'long'): tree.PrimitiveNode.Kind.i64,
-            'uint64': tree.PrimitiveNode.Kind.u64,
-            ('unsigned', 'long', 'long'): tree.PrimitiveNode.Kind.u64,
+        return tree.PrimitiveNode(self.m_token_seqs({
+            TokenKind.INT8: tree.PrimitiveNode.Kind.i8,
+            TokenKind.UINT8: tree.PrimitiveNode.Kind.u8,
+            TokenKind.INT16: tree.PrimitiveNode.Kind.i16,
+            TokenKind.SHORT: tree.PrimitiveNode.Kind.i16,
+            TokenKind.UINT16: tree.PrimitiveNode.Kind.u16,
+            (TokenKind.UNSIGNED, TokenKind.SHORT): tree.PrimitiveNode.Kind.u16,
+            TokenKind.INT32: tree.PrimitiveNode.Kind.i32,
+            TokenKind.LONG: tree.PrimitiveNode.Kind.i32,
+            TokenKind.UINT32: tree.PrimitiveNode.Kind.u32,
+            (TokenKind.UNSIGNED, TokenKind.LONG): tree.PrimitiveNode.Kind.u32,
+            TokenKind.INT64: tree.PrimitiveNode.Kind.i64,
+            (TokenKind.LONG, TokenKind.LONG): tree.PrimitiveNode.Kind.i64,
+            TokenKind.UINT64: tree.PrimitiveNode.Kind.u64,
+            (TokenKind.UNSIGNED, TokenKind.LONG, TokenKind.LONG): tree.PrimitiveNode.Kind.u64,
         }))
 
     def m_char_type(self):
-        return tree.PrimitiveNode(self.m_exact_seqs({'char': tree.PrimitiveNode.Kind.c8}))
+        return tree.PrimitiveNode(self.m_token_seqs({
+            TokenKind.CHAR: tree.PrimitiveNode.Kind.c8}))
 
     def m_wide_char_type(self):
-        return tree.PrimitiveNode(
-            self.m_exact_seqs({'wchar': tree.PrimitiveNode.Kind.c16}))
+        return tree.PrimitiveNode(self.m_token_seqs({
+            TokenKind.WCHAR: tree.PrimitiveNode.Kind.c16}))
 
     def m_boolean_type(self):
-        return tree.PrimitiveNode(
-            self.m_exact_seqs({'boolean': tree.PrimitiveNode.Kind.boolean}))
+        return tree.PrimitiveNode(self.m_token_seqs({
+            TokenKind.BOOLEAN: tree.PrimitiveNode.Kind.boolean}))
 
     def m_octet_type(self):
-        return tree.PrimitiveNode(
-            self.m_exact_seqs({'octet': tree.PrimitiveNode.Kind.byte}))
+        return tree.PrimitiveNode(self.m_token_seqs({
+            TokenKind.OCTET: tree.PrimitiveNode.Kind.byte}))
 
     @nontrivial_rule
     def m_template_type_spec(self):
@@ -717,23 +429,24 @@ class IdlParser:
 
     @nontrivial_rule
     def m_sequence_type(self):
-        self.m_exact('sequence')
-        self.m_exact('<')
+        self.m_token(TokenKind.SEQUENCE)
+        self.m_token(TokenKind.less_than)
         base_type = self.m_type_spec()
-        if self.m_exact_maybe(','):
-            max_count = self.m_positive_int_const()
-        else:
+        if self.m_token_maybe(TokenKind.greater_than):
             max_count = None
-        self.m_exact('>')
+        else:
+            self.m_token(TokenKind.comma)
+            max_count = self.m_positive_int_const()
+            self.m_token(TokenKind.greater_than)
         return tree.SequenceNode(base_type, max_count)
 
     def _string_type(self, is_wide=False):
-        self.m_exact('wstring' if is_wide else 'string')
+        self.m_token(TokenKind.WSTRING if is_wide else TokenKind.STRING)
         string = tree.PrimitiveNode(
             tree.PrimitiveNode.Kind.s16 if is_wide else tree.PrimitiveNode.Kind.s8)
-        if self.m_exact_maybe('<'):
+        if self.m_token_maybe(TokenKind.less_than):
             string.element_count_limit = self.m_positive_int_const()
-            self.m_exact('>')
+            self.m_token(TokenKind.greater_than)
         return string
 
     @nontrivial_rule
@@ -748,13 +461,14 @@ class IdlParser:
     def m_constr_type_dcl(self):
         return self.match((
             'struct_dcl',
-            'union_dcl',
+            # TODO: 'union_dcl',
             'enum_dcl',
         ))
 
     @nontrivial_rule
     def m_struct_dcl(self):
-        self.m_exact('struct')
+        # TODO: struct_def, struct_forward_dcl
+        self.m_token(TokenKind.STRUCT)
         struct = tree.StructNode(self.m_identifier())
         if self.m_begin_scope_maybe():
             while True:
@@ -762,19 +476,19 @@ class IdlParser:
                     'member',
                     'end_scope'
                 ))
-                if what == Token.end_scope:
+                if isinstance(what, Token) and what.kind == TokenKind.rbrace:
                     break
-                struct.add_raw(what)
+                struct.add_child(what)
         return struct
 
     @nontrivial_rule
     def m_member(self):
         type_spec = self.m_type_spec()
         members = []
-        for name_maybe_array in self.m_declarators():
+        for declarator in self.m_declarators():
             members.append(tree.FieldNode(
-                name_maybe_array.name, name_maybe_array.get_type(type_spec)))
-        self.m_exact(';')
+                declarator.name, declarator.get_type(type_spec)))
+        self.m_token(TokenKind.semicolon)
         return members
 
     def match_until(self, repeating_rules, terminating_rules, at_least_one=True):
@@ -790,6 +504,7 @@ class IdlParser:
 
     @nontrivial_rule
     def m_union_dcl(self):
+        # TODO: union_def, union_forward_dcl
         self.m_exact('union')
         name = self.m_identifier()
         union = tree.UnionNode()
@@ -800,7 +515,7 @@ class IdlParser:
             self.m_exact(')')
             self.m_begin_scope()
             cases, _ = self.match_until(('case'), ('end_scope'))
-            union.add_raw(cases)
+            union.add_child(cases)
         return union
 
     @nontrivial_rule
@@ -834,15 +549,15 @@ class IdlParser:
         return [self.m_type_spec(), self.m_declarator()]
 
     def m_enumerator(self):
-        return self.m_identifier()
+        return tree.EnumeratorNode(self.m_identifier())
 
     @nontrivial_rule
     def m_enum_dcl(self):
+        self.m_token(TokenKind.ENUM)
         enum_node = tree.EnumNode()
-        self.m_exact('enum')
         enum_node.name = self.m_identifier()
         self.m_begin_scope()
-        enum_node.add_raw(self.comma_list_of(('enumerator')))
+        enum_node.add_children(self.comma_list_of(('enumerator')))
         self.m_end_scope()
         return enum_node
 
@@ -850,17 +565,17 @@ class IdlParser:
     def m_array_declarator(self):
         # TODO: Multidem arrays
         name = self.m_identifier()
-        self.m_exact('[')
+        self.m_token(TokenKind.lbracket)
         size = self.m_positive_int_const()
-        self.m_exact(']')
-        return NameMaybeArray(name, [size])
+        self.m_token(TokenKind.rbracket)
+        return Declarator(name, [size])
 
     def m_simple_declarator(self):
-        return NameMaybeArray(self.m_identifier())
+        return Declarator(self.m_identifier())
 
     @nontrivial_rule
     def m_typedef_dcl(self):
-        self.m_exact('typedef')
+        self.m_token(TokenKind.TYPEDEF)
         base_type, name_maybe_arrays = self.m_type_declarator()
         typedefs = []
         for name_maybe_array in name_maybe_arrays:

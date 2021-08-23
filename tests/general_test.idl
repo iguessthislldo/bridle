@@ -7,6 +7,7 @@ const string annostr = "@topic";
 
 #include "another_file.idl"
 
+#if 0 // TODO
 @name
 @name(2)
 @name(x=2)
@@ -22,6 +23,7 @@ struct @before_struct_name AnnotatedStruct @after_struct_name {
 };
 
 @topic
+#endif
 struct NoModuleType {
   short value;
 };

@@ -41,7 +41,7 @@ jobs:
     - name: Run Tests
       run: |
         # DDS_ROOT=OpenDDS python tests/test.py --verbose
-        python tests/test.py --verbose
+        python -m unittest
 
     - name: Lint with flake8
       run: |

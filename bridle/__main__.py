@@ -1,7 +1,9 @@
+import sys
 from argparse import ArgumentParser
 from pathlib import Path
 
 from . import IdlParser
+from .errors import ErrorsReported
 
 
 def main():
@@ -23,6 +25,10 @@ def main():
     argparser.add_argument('--dump-tree',
         action='store_true',
         help='Dump processed tree.')
+    argparser.add_argument('--debug-parser',
+        action='store_true',
+        help='Trace parser matching rules')
+    # TODO: Other debug options
     # TODO: Control Ignored Macros (pragma)
     # TODO: Control Ignored Annotations
     # TODO: Control Unknown Annotations
@@ -30,8 +36,12 @@ def main():
 
     args_dict = vars(args)
     parser = IdlParser(**{k: args_dict[k] for k in set((
-        'includes', 'defines', 'dump_raw_tree', 'dump_tree'))})
-    print(repr(parser.parse(args.files)))
+        'includes', 'defines', 'dump_raw_tree', 'dump_tree', 'debug_parser'))})
+    try:
+        for tree in parser.parse(args.files):
+            tree.dump()
+    except ErrorsReported:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

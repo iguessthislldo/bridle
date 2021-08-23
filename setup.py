@@ -9,5 +9,7 @@ setup(
     },
     install_requires=[
         'pcpp',
+        'pygments>=2.8',
+        'rich',
     ],
 )

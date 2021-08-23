@@ -11,112 +11,12 @@ opendds_path = Path(os.environ.get('DDS_ROOT', 'OpenDDS'))
 
 
 # TODO
-@unittest.skip("TODO")
-class ConstExprTests(unittest.TestCase):
-
-    @unittest.expectedFailure
-    def test_expect_assert_value_fail(self):
-        idl_parser.parse(direct_input=['''\
-            @bridle::assert_value(1)
-            const short fail_value = 0;
-            '''])
-
-    def test_int_literals(self):
-        idl_parser.parse(direct_input=['''\
-            @bridle::assert_value(0)
-            const short zero = 0;
-            @bridle::assert_value(7)
-            const short oct = 07;
-            @bridle::assert_value(103)
-            const short dec = 103;
-            @bridle::assert_value(255)
-            const short hex1 = 0xFF;
-            @bridle::assert_value(255)
-            const short hex2 = 0Xff;
-            '''])
-
-    def test_boolean_literals(self):
-        idl_parser.parse(direct_input=['''\
-            @bridle::assert_value(true)
-            const boolean boolean1 = true;
-            @bridle::assert_value(true)
-            const boolean boolean2 = TRUE;
-            @bridle::assert_value(false)
-            const boolean boolean3 = false;
-            @bridle::assert_value(false)
-            const boolean boolean4 = false;
-            '''])
-
-    def test_float_literals(self):
-        # TODO: More Cases
-        idl_parser.parse(direct_input=['''\
-            @bridle::assert_value(1.2)
-            const float float1 = 1.2;
-            '''])
-
-    def test_char_literals(self):
-        # TODO
-        pass
-
-    def test_const_expr_ops_basic(self):
-        idl_parser.parse(direct_input=['''\
-            @bridle::assert_value(3)
-            const short or_value = 2 | 1;
-            @bridle::assert_value(2)
-            const short xor_value = 3 ^ 1;
-            @bridle::assert_value(1)
-            const short and_value = 3 & 1;
-            @bridle::assert_value(8)
-            const short shift_left_value = 1 << 3;
-            @bridle::assert_value(2)
-            const short shift_right_value = 16 >> 3;
-            @bridle::assert_value(0xEF)
-            const short add_value = 0x0E + 0xE1;
-            @bridle::assert_value(44)
-            const short sub_value = 88 - 44;
-            @bridle::assert_value(18)
-            const short mul_value = 3 * 6;
-            @bridle::assert_value(5)
-            const short div_value = 25 / 5;
-            @bridle::assert_value(1)
-            const short rem_value = 33 % 2;
-            @bridle::assert_value(364)
-            const short paren_value = (364);
-            @bridle::assert_value(10)
-            const short negative_negative_value = -(-10);
-            @bridle::assert_value(-10)
-            const short positive_positive_value = +(-10);
-            @bridle::assert_value(-4)
-            const short inverse_value = ~3;
-            @bridle::assert_value(-4)
-            const float inverse_value = ~3;
-            '''])
-
-    def test_const_expr_ops(self):
-        idl_parser.parse(direct_input=['''\
-            @bridle::assert_value(9)
-            const short expr1 = 1 + 2 + 3 + 4 - 1;
-            @bridle::assert_value(10)
-            const short expr2 = 4 * 2 + 6 / 2 - 7 % 6;
-            @bridle::assert_value(3)
-            const short expr3 = (4 * (2 + 6) / 2 - 7) % 6;
-            '''])
-
-    # TODO
-    @unittest.expectedFailure
-    def test_const_expr_references(self):
-        idl_parser.parse(direct_input=['''\
-            const short const1 = 0;
-            @bridle::assert_value(0)
-            const short const2 = const1;
-            '''])
-
-
 class IdlFileTests(unittest.TestCase):
 
     def test_general_test_idl(self):
         idl_parser.parse(
-            [test_path / 'general_test.idl'], warn_about_unsupported_annotations=False)
+            [test_path / 'general_test.idl'], warn_about_unsupported_annotations=False,
+            debug_all_parsing=True)
 
 
 # TODO
