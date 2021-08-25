@@ -8,7 +8,7 @@ Kind = PrimitiveNode.Kind
 idl_parser = bridle.IdlParser()
 
 
-class IdlConstantsTests(unittest.TestCase):
+class ConstantsTests(unittest.TestCase):
 
     # TODO: Test for error when literal is inconsistent with declared type
     # TODO: Test for error when value is too large for integer type

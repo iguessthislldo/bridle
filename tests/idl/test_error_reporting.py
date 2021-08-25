@@ -6,7 +6,7 @@ from bridle.errors import ParseError
 idl_parser = bridle.IdlParser(raise_parse_errors=True)
 
 
-class IdlConstantsTests(unittest.TestCase):
+class ErrorReportingTests(unittest.TestCase):
 
     def test_multiple_unsigned(self):
         with self.assertRaises(ParseError) as cm:
