@@ -1,9 +1,7 @@
 import unittest
 
 import bridle
-from bridle.tree import ConstantNode, PrimitiveNode
-
-Kind = PrimitiveNode.Kind
+from bridle.tree import ConstantNode, PrimitiveNode, PrimitiveKind
 
 idl_parser = bridle.IdlParser()
 
@@ -29,32 +27,32 @@ class ConstantsTests(unittest.TestCase):
             const unsigned long hex1 = 0xFF;
             const uint32 hex2 = 0Xff;
             '''])[0]
-        self.check(tree, 'zero', 0, Kind.u8)
-        self.check(tree, 'dec', 103, Kind.i16)
-        self.check(tree, 'oct', 0o7, Kind.i16)
-        self.check(tree, 'hex1', 0xff, Kind.u32)
-        self.check(tree, 'hex2', 0xff, Kind.u32)
+        self.check(tree, 'zero', 0, PrimitiveKind.u8)
+        self.check(tree, 'dec', 103, PrimitiveKind.i16)
+        self.check(tree, 'oct', 0o7, PrimitiveKind.i16)
+        self.check(tree, 'hex1', 0xff, PrimitiveKind.u32)
+        self.check(tree, 'hex2', 0xff, PrimitiveKind.u32)
 
     def test_boolean_literals(self):
         tree = idl_parser.parse(direct_inputs=['''\
             const boolean istrue = TRUE;
             const boolean isfalse = FALSE;
             '''])[0]
-        self.check(tree, 'istrue', True, Kind.boolean)
-        self.check(tree, 'isfalse', False, Kind.boolean)
+        self.check(tree, 'istrue', True, PrimitiveKind.boolean)
+        self.check(tree, 'isfalse', False, PrimitiveKind.boolean)
 
     def test_float_literals(self):
         tree = idl_parser.parse(direct_inputs=['''\
             const float float1 = 1.2;
             '''])[0]
-        self.check(tree, 'float1', 1.2, Kind.f32)
+        self.check(tree, 'float1', 1.2, PrimitiveKind.f32)
         # TODO: More cases
 
     def test_char_literals(self):
         tree = idl_parser.parse(direct_inputs=['''\
             const char c1 = 'c';
             '''])[0]
-        self.check(tree, 'c1', 'c', Kind.c8)
+        self.check(tree, 'c1', 'c', PrimitiveKind.c8)
         # TODO: More cases
 
     @unittest.skip("TODO")

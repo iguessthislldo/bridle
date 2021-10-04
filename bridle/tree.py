@@ -6,7 +6,7 @@ import re
 from .utils import is_sequence, Location
 from .errors import BridleError  # , RedefintionError
 
-# TODO: Seperate IDL processing into sepearte file?
+# TODO: Separate IDL processing into separate file?
 
 
 class ScopedName:
@@ -33,6 +33,41 @@ class ScopedName:
 
     def __str__(self):
         return repr(self)
+
+
+@dataclass(frozen=True)
+class PrimitiveTraits:
+    element_size: int = None
+    is_unsigned_int: bool = False
+    is_signed_int: bool = False
+    is_float: bool = False
+    is_text: bool = False
+    is_scalar: bool = True
+    is_bool: bool = False
+    is_raw: bool = False
+
+
+@unique
+class PrimitiveKind(Enum):
+    boolean = PrimitiveTraits(element_size=8, is_bool=True)
+    byte = PrimitiveTraits(element_size=8, is_raw=True)
+    u8 = PrimitiveTraits(element_size=8, is_unsigned_int=True)
+    i8 = PrimitiveTraits(element_size=8, is_signed_int=True)
+    u16 = PrimitiveTraits(element_size=16, is_unsigned_int=True)
+    i16 = PrimitiveTraits(element_size=16, is_signed_int=True)
+    u32 = PrimitiveTraits(element_size=32, is_unsigned_int=True)
+    i32 = PrimitiveTraits(element_size=32, is_signed_int=True)
+    u64 = PrimitiveTraits(element_size=64, is_unsigned_int=True)
+    i64 = PrimitiveTraits(element_size=64, is_signed_int=True)
+    u128 = PrimitiveTraits(element_size=128, is_unsigned_int=True)
+    i128 = PrimitiveTraits(element_size=128, is_signed_int=True)
+    f32 = PrimitiveTraits(element_size=32, is_float=True)
+    f64 = PrimitiveTraits(element_size=64, is_float=True)
+    f128 = PrimitiveTraits(element_size=128, is_float=True)
+    c8 = PrimitiveTraits(element_size=8, is_text=True)
+    c16 = PrimitiveTraits(element_size=16, is_text=True)
+    s8 = PrimitiveTraits(element_size=8, is_text=True, is_scalar=False)
+    s16 = PrimitiveTraits(element_size=16, is_text=True, is_scalar=False)
 
 
 class Action(Enum):
@@ -225,45 +260,11 @@ class Tree(ModuleNode):
         return self.repr_template('{}', self.loc, short=short)
 
 
-@dataclass(frozen=True)
-class PrimitiveTraits:
-    element_size: int = None
-    is_unsigned_int: bool = False
-    is_signed_int: bool = False
-    is_float: bool = False
-    is_text: bool = False
-    is_scalar: bool = True
-    is_bool: bool = False
-    is_raw: bool = False
-
-
 class PrimitiveNode(Node):
-
-    @unique
-    class Kind(Enum):
-        boolean = PrimitiveTraits(element_size=8, is_bool=True)
-        byte = PrimitiveTraits(element_size=8, is_raw=True)
-        u8 = PrimitiveTraits(element_size=8, is_unsigned_int=True)
-        i8 = PrimitiveTraits(element_size=8, is_signed_int=True)
-        u16 = PrimitiveTraits(element_size=16, is_unsigned_int=True)
-        i16 = PrimitiveTraits(element_size=16, is_signed_int=True)
-        u32 = PrimitiveTraits(element_size=32, is_unsigned_int=True)
-        i32 = PrimitiveTraits(element_size=32, is_signed_int=True)
-        u64 = PrimitiveTraits(element_size=64, is_unsigned_int=True)
-        i64 = PrimitiveTraits(element_size=64, is_signed_int=True)
-        u128 = PrimitiveTraits(element_size=128, is_unsigned_int=True)
-        i128 = PrimitiveTraits(element_size=128, is_signed_int=True)
-        f32 = PrimitiveTraits(element_size=32, is_float=True)
-        f64 = PrimitiveTraits(element_size=64, is_float=True)
-        f128 = PrimitiveTraits(element_size=128, is_float=True)
-        c8 = PrimitiveTraits(element_size=8, is_text=True)
-        c16 = PrimitiveTraits(element_size=16, is_text=True)
-        s8 = PrimitiveTraits(element_size=8, is_text=True, is_scalar=False)
-        s16 = PrimitiveTraits(element_size=16, is_text=True, is_scalar=False)
 
     def __init__(self, kind):
         super().__init__()
-        self.kind = self.Kind(kind)
+        self.kind = PrimitiveKind(kind)
         self.element_count_limit = None
 
     def accept(self, visitor):
@@ -318,10 +319,11 @@ class PrimitiveNode(Node):
 
 class FieldNode(Node):
 
-    def __init__(self, name, type_node=None, optional=False):
+    def __init__(self, name, type_node=None, optional=False, default=None):
         super().__init__(name)
         self.type_node = type_node
         self.optional = optional
+        self.default = default
 
     def _repr(self, short):
         return self.repr_template(repr(self.type_node), short=short)
@@ -333,7 +335,12 @@ class StructNode(ContainerNode):
         super().__init__(name=name)
         self.fields = {}
 
+    @staticmethod
+    def field_type():
+        return FieldNode
+
     def add_field(self, name, type_node, optional):
+        FieldType = self.field_type()
         self.fields[name] = FieldNode(name, type_node, optional)
 
     def accept(self, visitor):

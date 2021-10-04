@@ -242,8 +242,14 @@ class IdlParser(Parser):
     def m_begin_scope(self):
         return self.m_token(TokenKind.lbrace)
 
+    end_scope = TokenKind.rbrace
+
+    @classmethod
+    def is_end_scope(cls, what):
+      return isinstance(what, Token) and what.kind == cls.end_scope
+
     def m_end_scope(self):
-        return self.m_token(TokenKind.rbrace)
+        return self.m_token(self.end_scope)
 
     # =========================================================================
     # The methods below should follow the names and order of the grammar rules
@@ -279,7 +285,7 @@ class IdlParser(Parser):
                 'definition',
                 'end_scope',
             ))
-            if isinstance(what, Token) and what.kind == TokenKind.rbrace:
+            if self.is_end_scope(what):
                 break
             module.add_child(what)
         return module
@@ -378,45 +384,45 @@ class IdlParser(Parser):
     @nontrivial_rule
     def m_floating_pt_type(self):
         return tree.PrimitiveNode(self.m_token_seqs({
-            TokenKind.FLOAT: tree.PrimitiveNode.Kind.f32,
-            TokenKind.DOUBLE: tree.PrimitiveNode.Kind.f64,
-            (TokenKind.LONG, TokenKind.DOUBLE): tree.PrimitiveNode.Kind.f128,
+            TokenKind.FLOAT: tree.PrimitiveKind.f32,
+            TokenKind.DOUBLE: tree.PrimitiveKind.f64,
+            (TokenKind.LONG, TokenKind.DOUBLE): tree.PrimitiveKind.f128,
         }))
 
     @nontrivial_rule
     def m_integer_type(self):
         return tree.PrimitiveNode(self.m_token_seqs({
-            TokenKind.INT8: tree.PrimitiveNode.Kind.i8,
-            TokenKind.UINT8: tree.PrimitiveNode.Kind.u8,
-            TokenKind.INT16: tree.PrimitiveNode.Kind.i16,
-            TokenKind.SHORT: tree.PrimitiveNode.Kind.i16,
-            TokenKind.UINT16: tree.PrimitiveNode.Kind.u16,
-            (TokenKind.UNSIGNED, TokenKind.SHORT): tree.PrimitiveNode.Kind.u16,
-            TokenKind.INT32: tree.PrimitiveNode.Kind.i32,
-            TokenKind.LONG: tree.PrimitiveNode.Kind.i32,
-            TokenKind.UINT32: tree.PrimitiveNode.Kind.u32,
-            (TokenKind.UNSIGNED, TokenKind.LONG): tree.PrimitiveNode.Kind.u32,
-            TokenKind.INT64: tree.PrimitiveNode.Kind.i64,
-            (TokenKind.LONG, TokenKind.LONG): tree.PrimitiveNode.Kind.i64,
-            TokenKind.UINT64: tree.PrimitiveNode.Kind.u64,
-            (TokenKind.UNSIGNED, TokenKind.LONG, TokenKind.LONG): tree.PrimitiveNode.Kind.u64,
+            TokenKind.INT8: tree.PrimitiveKind.i8,
+            TokenKind.UINT8: tree.PrimitiveKind.u8,
+            TokenKind.INT16: tree.PrimitiveKind.i16,
+            TokenKind.SHORT: tree.PrimitiveKind.i16,
+            TokenKind.UINT16: tree.PrimitiveKind.u16,
+            (TokenKind.UNSIGNED, TokenKind.SHORT): tree.PrimitiveKind.u16,
+            TokenKind.INT32: tree.PrimitiveKind.i32,
+            TokenKind.LONG: tree.PrimitiveKind.i32,
+            TokenKind.UINT32: tree.PrimitiveKind.u32,
+            (TokenKind.UNSIGNED, TokenKind.LONG): tree.PrimitiveKind.u32,
+            TokenKind.INT64: tree.PrimitiveKind.i64,
+            (TokenKind.LONG, TokenKind.LONG): tree.PrimitiveKind.i64,
+            TokenKind.UINT64: tree.PrimitiveKind.u64,
+            (TokenKind.UNSIGNED, TokenKind.LONG, TokenKind.LONG): tree.PrimitiveKind.u64,
         }))
 
     def m_char_type(self):
         return tree.PrimitiveNode(self.m_token_seqs({
-            TokenKind.CHAR: tree.PrimitiveNode.Kind.c8}))
+            TokenKind.CHAR: tree.PrimitiveKind.c8}))
 
     def m_wide_char_type(self):
         return tree.PrimitiveNode(self.m_token_seqs({
-            TokenKind.WCHAR: tree.PrimitiveNode.Kind.c16}))
+            TokenKind.WCHAR: tree.PrimitiveKind.c16}))
 
     def m_boolean_type(self):
         return tree.PrimitiveNode(self.m_token_seqs({
-            TokenKind.BOOLEAN: tree.PrimitiveNode.Kind.boolean}))
+            TokenKind.BOOLEAN: tree.PrimitiveKind.boolean}))
 
     def m_octet_type(self):
         return tree.PrimitiveNode(self.m_token_seqs({
-            TokenKind.OCTET: tree.PrimitiveNode.Kind.byte}))
+            TokenKind.OCTET: tree.PrimitiveKind.byte}))
 
     @nontrivial_rule
     def m_template_type_spec(self):
@@ -443,7 +449,7 @@ class IdlParser(Parser):
     def _string_type(self, is_wide=False):
         self.m_token(TokenKind.WSTRING if is_wide else TokenKind.STRING)
         string = tree.PrimitiveNode(
-            tree.PrimitiveNode.Kind.s16 if is_wide else tree.PrimitiveNode.Kind.s8)
+            tree.PrimitiveKind.s16 if is_wide else tree.PrimitiveKind.s8)
         if self.m_token_maybe(TokenKind.less_than):
             string.element_count_limit = self.m_positive_int_const()
             self.m_token(TokenKind.greater_than)
@@ -476,7 +482,7 @@ class IdlParser(Parser):
                     'member',
                     'end_scope'
                 ))
-                if isinstance(what, Token) and what.kind == TokenKind.rbrace:
+                if self.is_end_scope(what):
                     break
                 struct.add_child(what)
         return struct
