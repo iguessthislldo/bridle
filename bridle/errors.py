@@ -9,6 +9,11 @@ class BridleError(Exception):
         return self.message
 
 
+class InternalError(BridleError):
+    def __init__(self, fmt, *args):
+        super().__init__('Internal error, please report: ' + fmt, *args)
+
+
 class ErrorsReported(BridleError):
     def __init__(self):
         super().__init__('')

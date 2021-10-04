@@ -341,7 +341,7 @@ class StructNode(ContainerNode):
 
     def add_field(self, name, type_node, optional):
         FieldType = self.field_type()
-        self.fields[name] = FieldNode(name, type_node, optional)
+        self.fields[name] = FieldType(name, type_node, optional)
 
     def accept(self, visitor):
         visitor.visit_struct(self)

@@ -246,7 +246,7 @@ class IdlParser(Parser):
 
     @classmethod
     def is_end_scope(cls, what):
-      return isinstance(what, Token) and what.kind == cls.end_scope
+        return isinstance(what, Token) and what.kind == cls.end_scope
 
     def m_end_scope(self):
         return self.m_token(self.end_scope)
