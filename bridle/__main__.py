@@ -1,9 +1,9 @@
-import sys
 from argparse import ArgumentParser
 from pathlib import Path
 
 from . import IdlParser
 from .errors import ErrorsReported
+from .logging import error_exit
 
 
 def main():
@@ -40,8 +40,8 @@ def main():
     try:
         for tree in parser.parse(args.files):
             tree.dump()
-    except ErrorsReported:
-        sys.exit(1)
+    except ErrorsReported as e:
+        error_exit(str(e))
 
 
 if __name__ == "__main__":

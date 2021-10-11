@@ -33,7 +33,7 @@ class IdlFile:
         preprocessor.parse(self.idl_file_contents, str(self.path))
         preprocessor.write(sio)
         if preprocessor.return_code != 0:
-            raise ErrorsReported()
+            raise ErrorsReported('Preprocessor failed')
         self.contents = sio.getvalue()
 
     def get_line(self, lineno):
@@ -91,7 +91,7 @@ class IdlParser(Parser):
         else:
             def location_error_handler(self, error):
                 print_location_error(error, idl_file.get_line(error.location.line))
-                raise ErrorsReported()
+                raise ErrorsReported('Syntax error occurred')
         name = idl_file.name()
         tokens = self.tokenizer.tokenize(idl_file.contents, name,
             debug=settings['debug_tokenizer'],

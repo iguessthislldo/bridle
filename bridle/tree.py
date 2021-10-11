@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import re
 
 from .utils import is_sequence, Location
-from .errors import BridleError  # , RedefintionError
+from .errors import BridleError, ErrorsReported
 
 # TODO: Separate IDL processing into separate file?
 
@@ -254,7 +254,7 @@ class Tree(ModuleNode):
 
         if self.errors:
             self.report_errors(self.errors)
-            raise BridleError('Semantic errors were found')
+            raise ErrorsReported('Semantic errors were found')
 
     def _repr(self, short):
         return self.repr_template('{}', self.loc, short=short)
