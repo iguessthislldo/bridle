@@ -55,3 +55,7 @@ class RedefintionError(SemanticError):
     def __init__(self, name, orig_loc, redef_loc):
         super().__init__(redef_loc,
             'Name {} is already being used at {}', repr(name), str(orig_loc))
+
+
+class ConstExprError(BridleError):
+    pass

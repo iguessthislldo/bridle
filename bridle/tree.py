@@ -2,9 +2,12 @@ import sys
 from enum import Enum, unique, auto
 from dataclasses import dataclass
 import re
+import numbers
+import typing
+from functools import cached_property
 
 from .utils import is_sequence, Location
-from .errors import BridleError, ErrorsReported
+from .errors import InternalError, ErrorsReported
 
 # TODO: Separate IDL processing into separate file?
 
@@ -23,7 +26,7 @@ class ScopedName:
         m = cls.idl_re.fullmatch(idl)
         if m:
             return cls(m.group(2).split('::'), m.group(1) is not None)
-        raise BridleError('Invalid scoped IDL name: {}', repr(idl))
+        raise InternalError('Invalid scoped IDL name: {}', repr(idl))
 
     def __repr__(self):
         name = '::'.join(self.parts)
@@ -37,7 +40,8 @@ class ScopedName:
 
 @dataclass(frozen=True)
 class PrimitiveTraits:
-    element_size: int = None
+    element_size: int
+    bound_element_size: typing.Optional[int] = None
     is_unsigned_int: bool = False
     is_signed_int: bool = False
     is_float: bool = False
@@ -46,11 +50,79 @@ class PrimitiveTraits:
     is_bool: bool = False
     is_raw: bool = False
 
+    @cached_property
+    def can_op(self) -> bool:
+        return self.is_scalar
+
+    @cached_property
+    def is_int(self) -> bool:
+        return self.is_unsigned_int or self.is_signed_int
+
+    @cached_property
+    def is_char(self) -> bool:
+        return self.is_text and self.is_scalar
+
+    @cached_property
+    def is_string(self) -> bool:
+        return self.is_text and not self.is_scalar
+
+    @cached_property
+    def is_unsigned_int_like(self) -> bool:
+        return self.is_raw or self.is_char or self.is_unsigned_int or self.is_bool
+
+    @cached_property
+    def is_int_like(self) -> bool:
+        return self.is_unsigned_int_like or self.is_signed_int
+
+    @cached_property
+    def is_number(self) -> bool:
+        return self.is_int or self.is_float
+
+    @cached_property
+    def is_number_like(self) -> bool:
+        return self.is_number or self.is_int_like
+
+    @cached_property
+    def valid_number_like_range(self) -> typing.Optional[typing.Tuple[int, int]]:
+        element_size = self.element_size
+        if self.bound_element_size is not None:
+            element_size = self.bound_element_size
+
+        if self.is_unsigned_int_like:
+            return (0, 2 ** element_size - 1)
+        elif self.is_signed_int:
+            return (-2 ** (element_size - 1), 2 ** (element_size - 1) - 1)
+        elif self.is_float:
+            # TODO: Floating point range needs to be checked
+            return (float("-Inf"), float("Inf"))
+        else:
+            return None
+
+    @cached_property
+    def min_number_like(self):
+        return self.valid_number_like_range[0]
+
+    @cached_property
+    def max_number_like(self):
+        return self.valid_number_like_range[1]
+
+    @cached_property
+    def expected_python_type(self) -> type:
+        if self.is_bool:
+            return bool
+        elif self.is_int or self.is_raw:
+            return numbers.Integral
+        elif self.is_float:
+            return numbers.Real
+        elif self.is_text:
+            return str
+        return None
+
 
 @unique
 class PrimitiveKind(Enum):
     boolean = PrimitiveTraits(element_size=8, is_bool=True)
-    byte = PrimitiveTraits(element_size=8, is_raw=True)
+    byte = PrimitiveTraits(element_size=8, bound_element_size=1, is_raw=True)
     u8 = PrimitiveTraits(element_size=8, is_unsigned_int=True)
     i8 = PrimitiveTraits(element_size=8, is_signed_int=True)
     u16 = PrimitiveTraits(element_size=16, is_unsigned_int=True)
@@ -68,6 +140,42 @@ class PrimitiveKind(Enum):
     c16 = PrimitiveTraits(element_size=16, is_text=True)
     s8 = PrimitiveTraits(element_size=8, is_text=True, is_scalar=False)
     s16 = PrimitiveTraits(element_size=16, is_text=True, is_scalar=False)
+
+    def number_like_value(self, value) -> int:
+        if self.value.is_char:
+            return ord(value)
+        elif self.value.is_int_like:
+            return int(value)
+        elif self.value.is_float:
+            return value
+        else:
+            raise InternalError('{} value {} is not number-like', self.name, repr(value))
+
+    def valid_number_like_range(self, number_value) -> bool:
+        r = self.value.valid_number_like_range
+        if r is None:
+            raise InternalError('Could not get number-like range for {}', self.name)
+        return r[0] <= number_value <= r[1]
+
+    def check_value(self, value):
+        expected_python_type = self.value.expected_python_type
+        if expected_python_type is None:
+            raise InternalError('Could not get expected python type for {}', self.name)
+        if not isinstance(value, expected_python_type):
+            raise TypeError('{} must be like Python type {}, but {} is {}.'.format(
+                self.name, expected_python_type.__name__, repr(value), type(value).__name__))
+
+        if self.value.is_char and len(value) != 1:
+            raise ValueError('Character str values like {} must have a length of 1: {}'.format(
+                self.name, repr(value)))
+
+        if self.value.is_number_like:
+            number_value = self.number_like_value(value)
+            if not self.valid_number_like_range(number_value):
+                raise ValueError((
+                    '{v}' + ('' if self.value.is_number else ' (number value {nv})')
+                    + ' is outside valid range for {n}.').format(
+                        v=repr(value), nv=number_value, n=self.name))
 
 
 class Action(Enum):
@@ -202,7 +310,7 @@ class ContainerNode(Node):
             return node
         get_scoped_name = ScopedName(scoped_name.parts[1:], absolute=False)
         if not isinstance(node, ContainerNode):
-            raise BridleError('{} can\'t have any children like {}',
+            raise InternalError('{} can\'t have any children like {}',
                 node.scoped_name, get_scoped_name)
         return node.get(get_scoped_name)
 

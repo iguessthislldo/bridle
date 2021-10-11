@@ -1,102 +1,82 @@
 import unittest
 
-from bridle.errors import InternalError
-from bridle.idl_const_expr import Op, OpKind
+from bridle.errors import InternalError, ConstExprError
+from bridle.idl_const_expr import Op, ConstExpr, ConstValue
+from bridle.tree import PrimitiveKind
 
 
-class MockValue:
-    def __init__(self, value):
-        self.value = value
+def V(arg1, arg2=None):
+    if arg2 is None:
+        if isinstance(arg1, int):
+            return ConstValue(arg1, PrimitiveKind.i64)
+        elif isinstance(arg1, (ConstExpr, ConstValue)):
+            return arg1
+        raise TypeError(repr(type(arg1)))
+    return ConstValue(arg1, arg2)
 
-    def can_eval(self):
-        return self.value is not None
 
-    def eval(self):
-        return self.value
-
-    def __str__(self):
-        return str(self.value)
-
-    def __repr__(self):
-        return '<MockValue: {}>'.format(str(self))
+def E(kind, *operands):
+    return ConstExpr(kind, *[V(i) for i in operands])
 
 
 class ConstExprTests(unittest.TestCase):
-    def test_can_not_eval(self):
-        self.assertFalse(Op(OpKind.ADD, MockValue(None), MockValue(None)).can_eval())
-        self.assertFalse(Op(OpKind.ADD, MockValue(1), MockValue(None)).can_eval())
-        self.assertFalse(Op(OpKind.ADD, MockValue(None), MockValue(1)).can_eval())
+    def test_wrong_operand_count_causes_error(self):
+        with self.assertRaisesRegex(InternalError, 'ADD expects 2 operands, got 0'):
+            ConstExpr(Op.ADD)
 
-    def _op_helper(self, kind, *values):
-        v = [i if isinstance(i, Op) else MockValue(i) for i in values]
-        print(v)
-        op = Op(kind, *v)
-        self.assertTrue(op.can_eval())
-        return op
-
-    def op_helper(self, kind, expected_result, *values):
-        op = self._op_helper(kind, *values)
-        self.assertEqual(op.eval(), expected_result)
+    def h(self, expr, expected_result):
+        expected_result = V(expected_result)
+        self.assertEqual(expr.eval(expected_result.kind), expected_result.value)
 
     def test_or(self):
-        self.op_helper(OpKind.OR, 6, 2, 6)
+        self.h(E(Op.OR, 2, 6), 6)
 
     def test_xor(self):
-        self.op_helper(OpKind.XOR, 1, 3, 2)
+        self.h(E(Op.XOR, 3, 2), 1)
 
     def test_and(self):
-        self.op_helper(OpKind.AND, 2, 2, 3)
+        self.h(E(Op.AND, 2, 3), 2)
 
     def test_rshift(self):
-        self.op_helper(OpKind.RSHIFT, 3, 6, 1)
+        self.h(E(Op.RSHIFT, 6, 1), 3)
 
     def test_lshift(self):
-        self.op_helper(OpKind.LSHIFT, 6, 3, 1)
+        self.h(E(Op.LSHIFT, 3, 1), 6)
 
     def test_add(self):
-        self.op_helper(OpKind.ADD, 15, 7, 8)
+        self.h(E(Op.ADD, 7, 8), 15)
 
     def test_subtract(self):
-        self.op_helper(OpKind.SUBTRACT, 8, 15, 7)
+        self.h(E(Op.SUBTRACT, 15, 7), 8)
 
     def test_multiply(self):
-        self.op_helper(OpKind.MULTIPLY, 20, 4, 5)
+        self.h(E(Op.MULTIPLY, 4, 5), 20)
 
     def test_divide(self):
-        self.op_helper(OpKind.DIVIDE, 5, 20, 4)
+        self.h(E(Op.DIVIDE, 20, 4), 5)
 
     def test_modulo(self):
-        self.op_helper(OpKind.MODULO, 1, 5, 2)
+        self.h(E(Op.MODULO, 5, 2), 1)
 
     def test_positive(self):
         # Don't know what this is used for...
-        self.op_helper(OpKind.POSITIVE, 3, 3)
+        self.h(E(Op.POSITIVE, 3), 3)
 
     def test_negative(self):
-        self.op_helper(OpKind.NEGATIVE, -3, 3)
+        self.h(E(Op.NEGATIVE, -3), 3)
 
     def test_invert(self):
-        self.op_helper(OpKind.INVERT, -1, 0)  # TODO
+        self.h(E(Op.INVERT, -1), 0)
+        self.h(E(Op.INVERT, 0xfe), V(0x01, PrimitiveKind.u8))
 
     def test_prioritize(self):
-        self.op_helper(OpKind.PRIORITIZE, 1, 1)  # TODO
-
-    def _expr_helper(self, expr):
-        if isinstance(expr, tuple):
-            kind, *raw_operands = expr
-            operands = [self._expr_helper(i) for i in raw_operands]
-            op = self._op_helper(kind, *operands)
-            return op
-        return expr
-
-    def expr_helper(self, expr, expected_result):
-        self.assertEqual(self._expr_helper(expr).eval(), expected_result)
+        self.h(E(Op.PRIORITIZE, 1), 1)  # TODO
 
     def test_expr1(self):
-        self.expr_helper((OpKind.SUBTRACT, (OpKind.MULTIPLY, 5, 4), (OpKind.ADD, 2, 1)), 17)
+        self.h(E(Op.SUBTRACT, E(Op.MULTIPLY, 5, 4), E(Op.ADD, 2, 1)), 17)
 
-    def test_wrong_operand_count_causes_error(self):
-        with self.assertRaisesRegex(InternalError, 'Op expects'):
-            Op(OpKind.ADD)
+    def test_invalid_range(self):
+        with self.assertRaisesRegex(ConstExprError, '300 is outside valid range for u8'):
+            self.h(E(Op.MULTIPLY, 30, 10), V(0, PrimitiveKind.u8))
 
     # TODO: More Complete Tests
