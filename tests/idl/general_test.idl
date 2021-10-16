@@ -5,8 +5,6 @@
 
 const string annostr = "@topic";
 
-#include "another_file.idl"
-
 #if 0 // TODO
 @name
 @name(2)

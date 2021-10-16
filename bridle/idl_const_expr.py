@@ -3,7 +3,6 @@ import operator as pyop
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, Optional
-from functools import cached_property
 import inspect
 import string
 from dataclasses import dataclass
@@ -49,17 +48,20 @@ class ConstValue(ConstAbc):
 @dataclass(frozen=True)
 class OpTraits:
     fmt: str
-    impl: Optional[Callable[..., Any]]
-    type_impl: Optional[Callable[PrimitiveKind, ..., Any]] = None
+    # TODO: Fix for Python 3.8
+    # impl: Optional[Callable[..., Any]]
+    # type_impl: Optional[Callable[PrimitiveKind, ..., Any]] = None
+    impl: Optional[Any]
+    type_impl: Optional[Any] = None
     accepts_floats: bool = True
 
-    @cached_property
+    @property
     def impl_details(self):
         if self.impl is None:
             return (True, self.type_impl)
         return (False, self.impl)
 
-    @cached_property
+    @property
     def operand_count(self):
         subtract_one, impl = self.impl_details
         impl_count = len(inspect.getfullargspec(impl).args)
@@ -105,7 +107,7 @@ class Op(enum.Enum):
         else:
             return impl(*operands)
 
-    @cached_property
+    @property
     def operand_count(self):
         return self.value.operand_count
 

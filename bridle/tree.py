@@ -1,13 +1,12 @@
 import sys
-from enum import Enum, unique, auto
+import enum
 from dataclasses import dataclass
 import re
 import numbers
 import typing
-from functools import cached_property
 
 from .utils import is_sequence, Location
-from .errors import InternalError, ErrorsReported
+from .errors import InternalError, ErrorsReported, RedefintionError
 
 # TODO: Separate IDL processing into separate file?
 
@@ -50,39 +49,39 @@ class PrimitiveTraits:
     is_bool: bool = False
     is_raw: bool = False
 
-    @cached_property
+    @property
     def can_op(self) -> bool:
         return self.is_scalar
 
-    @cached_property
+    @property
     def is_int(self) -> bool:
         return self.is_unsigned_int or self.is_signed_int
 
-    @cached_property
+    @property
     def is_char(self) -> bool:
         return self.is_text and self.is_scalar
 
-    @cached_property
+    @property
     def is_string(self) -> bool:
         return self.is_text and not self.is_scalar
 
-    @cached_property
+    @property
     def is_unsigned_int_like(self) -> bool:
         return self.is_raw or self.is_char or self.is_unsigned_int or self.is_bool
 
-    @cached_property
+    @property
     def is_int_like(self) -> bool:
         return self.is_unsigned_int_like or self.is_signed_int
 
-    @cached_property
+    @property
     def is_number(self) -> bool:
         return self.is_int or self.is_float
 
-    @cached_property
+    @property
     def is_number_like(self) -> bool:
         return self.is_number or self.is_int_like
 
-    @cached_property
+    @property
     def valid_number_like_range(self) -> typing.Optional[typing.Tuple[int, int]]:
         element_size = self.element_size
         if self.bound_element_size is not None:
@@ -98,15 +97,15 @@ class PrimitiveTraits:
         else:
             return None
 
-    @cached_property
+    @property
     def min_number_like(self):
         return self.valid_number_like_range[0]
 
-    @cached_property
+    @property
     def max_number_like(self):
         return self.valid_number_like_range[1]
 
-    @cached_property
+    @property
     def expected_python_type(self) -> type:
         if self.is_bool:
             return bool
@@ -118,9 +117,13 @@ class PrimitiveTraits:
             return str
         return None
 
+    @property
+    def element_size_bytes(self) -> int:
+        return self.element_size // 8
 
-@unique
-class PrimitiveKind(Enum):
+
+@enum.unique
+class PrimitiveKind(enum.Enum):
     boolean = PrimitiveTraits(element_size=8, is_bool=True)
     byte = PrimitiveTraits(element_size=8, bound_element_size=1, is_raw=True)
     u8 = PrimitiveTraits(element_size=8, is_unsigned_int=True)
@@ -178,10 +181,10 @@ class PrimitiveKind(Enum):
                         v=repr(value), nv=number_value, n=self.name))
 
 
-class Action(Enum):
-    add = auto()
-    ignore = auto()
-    # TODO: Other actions? merge, replace?
+class Action(enum.Enum):
+    add = enum.auto()
+    ignore = enum.auto()
+    replace = enum.auto()
 
 
 class Node:
@@ -193,6 +196,7 @@ class Node:
         self.loc = loc
         self.tree = None
         self.def_index = None
+        self.marked_for_trim = False
 
     @property
     def name(self):
@@ -217,8 +221,7 @@ class Node:
     # Semantic Phases ---------------------------------------------------------
 
     def handle_possible_redefintion(self, new_node):
-        # TODO
-        # self.tree.new_error(RedefintionError(self.name, self.loc, new_node.loc))
+        self.tree.new_error(RedefintionError(self.name, self.loc, new_node.loc))
         return Action.ignore
 
     def emplace_phase(self):
@@ -228,6 +231,9 @@ class Node:
         modules nodes that are the same namespace are merged and checks for
         redefintion errors happen.
         '''
+        raise NotImplementedError
+
+    def trim_phase(self):
         raise NotImplementedError
 
     # Only Usable After Semantic Phases ---------------------------------------
@@ -267,6 +273,7 @@ class ContainerNode(Node):
         super().__init__(name, parent, loc)
         self.children = []
         self.children_dict = None
+        self.trimmed = False
 
     def add_child(self, child):
         if is_sequence(child):
@@ -275,12 +282,16 @@ class ContainerNode(Node):
             self.children.append(child)
             if self.tree is not None:
                 child.set_tree(self.tree, self.scoped_name)
+            if self.children_dict is not None:
+                self.emplace_nodes([child])
 
     def add_children(self, children):
         self.children.extend(children)
         if self.tree is not None:
             for child in children:
                 child.set_tree(self.tree, self.scoped_name)
+        if self.children_dict is not None:
+            self.emplace_nodes(children)
 
     def set_tree(self, tree, parent_scoped_name):
         super().set_tree(tree, parent_scoped_name)
@@ -292,15 +303,37 @@ class ContainerNode(Node):
             self.children_dict = {}
         for node in nodes:
             add = True
+            replace = False
             existing = self.children_dict.get(node.name)
+            action = None
             if existing is not None:
                 action = existing.handle_possible_redefintion(node)
                 add = action == Action.add
+                replace = action == Action.replace
             if add:
                 self.children_dict[node.name] = node
                 node.parent = self
                 if isinstance(node, ContainerNode):
                     node.emplace_phase()
+            if replace:
+                node.marked_for_trim = True
+
+    def trim_children(self):
+        if self.trimmed:
+            return
+        for name, child in self.children_dict.items():
+            if isinstance(child, ContainerNode):
+                child.trim_children()
+            if child.marked_for_trim:
+                del self.children_dict[name]
+        new_children = []
+        for child in self.children:
+            if isinstance(child, ContainerNode):
+                child.trim_children()
+            if not child.marked_for_trim:
+                new_children.append(child)
+        self.children = new_children
+        self.trimmed = True
 
     def get(self, scoped_name):
         if isinstance(scoped_name, str):
@@ -317,8 +350,11 @@ class ContainerNode(Node):
     def emplace_phase(self):
         self.emplace_nodes(self.children)
 
+    def trim_phase(self):
+        self.trim_children(self.children)
+
     def accept(self, visitor):
-        for child in self.children.values():
+        for child in self.children:
             child.accept(visitor)
 
     def dump(self, level=0):
@@ -329,8 +365,12 @@ class ContainerNode(Node):
 
 
 class ModuleNode(ContainerNode):
-    # TODO: Handle merging modules
-    pass
+    def handle_possible_redefintion(self, new_node):
+        if isinstance(new_node, ModuleNode):
+            self.add_children(new_node.children)
+            return Action.replace
+        else:
+            return super.handle_possible_redefintion(new_node)
 
 
 class Tree(ModuleNode):
