@@ -1,47 +1,49 @@
 from argparse import ArgumentParser
 from pathlib import Path
 
-from . import IdlParser
+from .get_parser import add_type_file_argument_parsing, get_parser
 from .errors import ErrorsReported
 from .logging import error_exit
+from .cdr.data_dumper import DataDumper
+
+
+def dump_tree(args, parser, trees):
+    for tree in trees:
+        tree.dump()
+
+
+def dump_data(args, parser, trees):
+    DataDumper(trees).dump(args.data_file.read_bytes(), args.topic_type_name)
 
 
 def main():
     # Parse Arguments
-    argparser = ArgumentParser(description='Describe an OMG IDL file.')
-    argparser.add_argument('files',
-        metavar='FILE', type=Path, nargs='+',
-        help='OMG IDL File(s)')
-    argparser.add_argument('-I', '--include', dest='includes',
-        type=Path, action='append', default=[],
-        metavar='DIR_PATH',
-        help='Add path to the preprocessor include directories.')
-    argparser.add_argument('-D', '--define', dest='defines',
-        action='append', default=[], metavar='NAME=VALUE',
-        help='Define macro value for the preprocessor.')
-    argparser.add_argument('--dump-raw-tree',
-        action='store_true',
-        help='Dump tree as parsed by Lark.')
-    argparser.add_argument('--dump-tree',
-        action='store_true',
-        help='Dump processed tree.')
-    argparser.add_argument('--debug-parser',
-        action='store_true',
-        help='Trace parser matching rules')
-    # TODO: Other debug options
-    # TODO: Control Ignored Macros (pragma)
-    # TODO: Control Ignored Annotations
-    # TODO: Control Unknown Annotations
-    args = argparser.parse_args()
+    argparser = ArgumentParser(description='OMG IDL Analysis Tool')
 
-    args_dict = vars(args)
-    parser = IdlParser(**{k: args_dict[k] for k in set((
-        'includes', 'defines', 'dump_raw_tree', 'dump_tree', 'debug_parser'))})
+    subcmds = argparser.add_subparsers()
+
+    dump_tree_subcmd = subcmds.add_parser('dump-tree')
+    dump_tree_subcmd.set_defaults(subcmd=dump_tree)
+
+    dump_data_subcmd = subcmds.add_parser('dump-data')
+    dump_data_subcmd.set_defaults(subcmd=dump_data)
+    dump_data_subcmd.add_argument('topic_type_name',
+        metavar='TOPIC_TYPE_NAME',
+        help='Name of the topic/base/top-level type')
+    dump_data_subcmd.add_argument('data_file',
+        metavar='DATA_FILE', type=Path,
+        help='CDR File')
+
+    add_type_file_argument_parsing(argparser)
+
+    args = argparser.parse_args()
+    parser = get_parser(args)
     try:
-        for tree in parser.parse(args.files):
-            tree.dump()
+        trees = parser.parse(args.type_files)
     except ErrorsReported as e:
         error_exit(str(e))
+
+    args.subcmd(args, parser, trees)
 
 
 if __name__ == "__main__":

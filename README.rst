@@ -2,7 +2,7 @@
 Bridle
 ######
 
-Bridle is parser and AST library for OMG Interface Description Language.
+Bridle is a parser, AST library, and command line multi-tool for the Object Management Group (OMG) Interface Description Language (IDL) and related data formats.
 
 **************************************************
 Intentional Divergences with the IDL Specification

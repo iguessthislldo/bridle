@@ -1,0 +1,5 @@
+struct Simple {
+    string name;
+    uint32 u32_value;
+    boolean valid;
+};
