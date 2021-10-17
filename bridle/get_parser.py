@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from . import IdlParser
+from .idl import IdlParser
 
 
 valid_args = set((

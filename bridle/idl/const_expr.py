@@ -7,8 +7,8 @@ import inspect
 import string
 from dataclasses import dataclass
 
-from .errors import ConstExprError, InternalError
-from .tree import PrimitiveKind
+from ..errors import ConstExprError, InternalError
+from ..tree import PrimitiveKind
 
 
 class ConstAbc(ABC):

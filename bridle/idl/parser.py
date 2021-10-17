@@ -3,13 +3,13 @@ from io import StringIO
 
 from pcpp import Preprocessor
 
-from .utils import Location, is_sequence
-from .errors import ErrorsReported, ExpectedError
-from . import tree
-from .parser import Parser, nontrivial_rule
-from .idl_tokenize import IdlTokenizer, Token, TokenKind, dump_tokens, \
+from ..utils import Location, is_sequence
+from ..errors import ErrorsReported, ExpectedError
+from .. import tree
+from ..parser import Parser, nontrivial_rule
+from .tokenizer import IdlTokenizer, Token, TokenKind, dump_tokens, \
     set_location_from_line_statement
-from .logging import print_location_error
+from ..log import print_location_error
 
 
 class IdlFile:

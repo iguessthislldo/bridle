@@ -3,7 +3,7 @@ from pathlib import Path
 
 from .get_parser import add_type_file_argument_parsing, get_parser
 from .errors import ErrorsReported
-from .logging import error_exit
+from .log import error_exit
 from .cdr.data_dumper import DataDumper
 
 

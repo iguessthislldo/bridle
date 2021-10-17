@@ -2,9 +2,9 @@ import re
 import enum
 from string import hexdigits, octdigits
 
-from .errors import ExpectedError, ParseError
+from ..errors import ExpectedError, ParseError
+from ..utils import Location
 from .parser import Parser, nontrivial_rule
-from .utils import Location
 
 
 class AbstractToken:

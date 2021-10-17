@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from bridle.idl_tokenize import IdlTokenizer, TokenKind
+from bridle.idl.tokenizer import IdlTokenizer, TokenKind
 from bridle.errors import ParseError
 
 
@@ -123,4 +123,6 @@ class IdlTokenizerTests(unittest.TestCase):
         path = test_path / 'general_test.idl'
         text = path.read_text()
         tokens = tokenizer.tokenize(text, str(path))
+        # for token in tokens:
+        #   print(repr(token))
         self.round_trip_check(text, tokens)
