@@ -23,6 +23,7 @@ class Stream:
         self.furthest_errors = [None]
         self.furthest_error_locs = [Location(source=name)]
         self.in_annotation = False
+        self.annotation_appls = [[]]
 
     def __iter__(self):
         return self
@@ -62,6 +63,7 @@ class Stream:
         self.locs.append(Location(self.loc()))
         self.furthest_errors.append(self.furthest_errors[-1])
         self.furthest_error_locs.append(Location(self.furthest_error_locs[-1]))
+        self.annotation_appls.append([])
 
     def pop(self):
         return (
@@ -69,12 +71,15 @@ class Stream:
             self.locs.pop(),
             self.furthest_errors.pop(),
             self.furthest_error_locs.pop(),
+            self.annotation_appls.pop(),
         )
 
     def accept(self):
-        it, loc, error, error_loc = self.pop()
+        it, loc, error, error_loc, anno_appls = self.pop()
+        for anno_appl in anno_appls:
+            print('IGNORED ANNOTATION:', anno_appl)
         self.advance(it, loc)
-        return it, loc, error, error_loc
+        return it, loc, error, error_loc, anno_appls
 
     def check_furthest_error_candidate(self, error):
         if error.location > self.furthest_error_locs[-1]:
@@ -82,17 +87,35 @@ class Stream:
             self.furthest_error_locs[-1] = error.location
 
     def reject(self, this_error):
-        it, loc, popped_error, error_loc = self.pop()
+        it, loc, popped_error, error_loc, anno_appl = self.pop()
         self.check_furthest_error_candidate(this_error)
         if popped_error is not None:
             self.check_furthest_error_candidate(popped_error)
-        return it, loc, popped_error, error_loc
+        return it, loc, popped_error, error_loc, anno_appl
 
     def furthest_error(self, root_error):
         if self.furthest_error_locs[0] > root_error.location and \
                 self.furthest_errors[0] is not None:
             return self.furthest_errors[0]
         return None
+
+    def stack_size(self):
+        return len(self.iters) - 1
+
+    def push_annotation(self, node):
+        self.annotation_appls[-1].append(node)
+
+    def get_annotations(self, name):
+        rv = []
+        keep = []
+        name = str(name)
+        for anno in self.annotation_appls[-1]:
+            if str(anno[0]) == name:
+                rv.append(anno)
+            else:
+                keep.append(anno)
+        self.annotation_appls[-1] = keep
+        return rv
 
 
 def nontrivial_rule(method):
@@ -146,18 +169,18 @@ class Parser:
 
     def rule_wrapper(self, func, name, maybe, *args, **kwargs):
         if self.debug_this_parser:
-            print('| ' * (len(self.stream.iters) - 1) + name, args, kwargs, self.stream.loc())
+            print('| ' * self.stream.stack_size() + name, args, kwargs, self.stream.loc())
         self.stream.push()
         try:
             rv = func(*args, **kwargs) if maybe else func(self, *args, **kwargs)
-            it, loc, error, error_loc = self.stream.accept()
+            it, loc, *_ = self.stream.accept()
             if self.debug_this_parser:
-                print('| ' * (len(self.stream.iters) - 1) + 'ACCEPT', loc)
+                print('| ' * self.stream.stack_size() + 'ACCEPT', loc)
             return rv
         except ParseError as e:
             self.stream.reject(e)
             if self.debug_this_parser:
-                print('| ' * (len(self.stream.iters) - 1) + 'REJECT:',
+                print('| ' * self.stream.stack_size() + 'REJECT:',
                     e, self.stream.furthest_error_locs[-1])
             if maybe:
                 return None

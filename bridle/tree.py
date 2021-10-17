@@ -6,7 +6,7 @@ import numbers
 import typing
 
 from .utils import is_sequence, Location
-from .errors import InternalError, ErrorsReported, RedefintionError
+from .errors import InternalError, ErrorsReported, RedefinitionError
 
 # TODO: Separate IDL processing into separate file?
 
@@ -184,7 +184,8 @@ class PrimitiveKind(enum.Enum):
 class Action(enum.Enum):
     add = enum.auto()
     ignore = enum.auto()
-    replace = enum.auto()
+    trim_new = enum.auto()
+    trim_old = enum.auto()
 
 
 class Node:
@@ -220,8 +221,8 @@ class Node:
 
     # Semantic Phases ---------------------------------------------------------
 
-    def handle_possible_redefintion(self, new_node):
-        self.tree.new_error(RedefintionError(self.name, self.loc, new_node.loc))
+    def handle_possible_redefinition(self, new_node):
+        self.tree.new_error(RedefinitionError(self.name, self.loc, new_node.loc))
         return Action.ignore
 
     def emplace_phase(self):
@@ -229,7 +230,7 @@ class Node:
         This phase does basic checks on the children and moves them into
         Node-specific structures. As part of this nodes get their full names,
         modules nodes that are the same namespace are merged and checks for
-        redefintion errors happen.
+        redefinition errors happen.
         '''
         raise NotImplementedError
 
@@ -303,20 +304,24 @@ class ContainerNode(Node):
             self.children_dict = {}
         for node in nodes:
             add = True
-            replace = False
+            trim_new = False
+            trim_old = False
             existing = self.children_dict.get(node.name)
             action = None
             if existing is not None:
-                action = existing.handle_possible_redefintion(node)
-                add = action == Action.add
-                replace = action == Action.replace
+                action = existing.handle_possible_redefinition(node)
+                trim_old = action == Action.trim_old
+                trim_new = action == Action.trim_new
+                add = action == Action.add or trim_old
             if add:
                 self.children_dict[node.name] = node
                 node.parent = self
                 if isinstance(node, ContainerNode):
                     node.emplace_phase()
-            if replace:
+            if trim_new:
                 node.marked_for_trim = True
+            if trim_old:
+                existing.marked_for_trim = True
 
     def trim_children(self):
         if self.trimmed:
@@ -365,12 +370,12 @@ class ContainerNode(Node):
 
 
 class ModuleNode(ContainerNode):
-    def handle_possible_redefintion(self, new_node):
+    def handle_possible_redefinition(self, new_node):
         if isinstance(new_node, ModuleNode):
             self.add_children(new_node.children)
-            return Action.replace
+            return Action.trim_new
         else:
-            return super.handle_possible_redefintion(new_node)
+            return super.handle_possible_redefinition(new_node)
 
 
 class Tree(ModuleNode):
@@ -467,11 +472,9 @@ class PrimitiveNode(Node):
 
 class FieldNode(Node):
 
-    def __init__(self, name, type_node=None, optional=False, default=None):
+    def __init__(self, name, type_node=None):
         super().__init__(name)
         self.type_node = type_node
-        self.optional = optional
-        self.default = default
 
     def _repr(self, short):
         return self.repr_template(repr(self.type_node), short=short)
@@ -479,17 +482,8 @@ class FieldNode(Node):
 
 class StructNode(ContainerNode):
 
-    def __init__(self, name=None):
-        super().__init__(name=name)
-        self.fields = {}
-
-    @staticmethod
-    def field_type():
-        return FieldNode
-
-    def add_field(self, name, type_node, optional):
-        FieldType = self.field_type()
-        self.fields[name] = FieldType(name, type_node, optional)
+    def __init__(self, name):
+        super().__init__(name)
 
     def accept(self, visitor):
         visitor.visit_struct(self)
@@ -561,17 +555,34 @@ class ConstantNode(Node):
             '{} = {}', repr(self.primitive_node), repr(self.value), short=short)
 
 
+class UnionBranchNode(FieldNode):
+
+    def __init__(self, name, type_node):
+        super().__init__(name, type_node)
+        self.cases = []
+        self.is_default_branch = False
+
+
 class UnionNode(ContainerNode):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, name):
+        super().__init__(name)
         self.disc_type = None
+        self.forward_dcl = False
 
     def accept(self, visitor):
         visitor.visit_union(self)
 
     def _repr(self, short):
         return self.repr_template('{}', repr(self.disc_type), short=short)
+
+    def handle_possible_redefinition(self, new_node):
+        if isinstance(new_node, UnionNode):
+            if new_node.forward_dcl:
+                return Action.trim_new
+            elif self.forward_dcl:
+                return Action.trim_old
+        return super.handle_possible_redefinition(new_node)
 
 
 class TypedefNode(Node):
@@ -585,6 +596,20 @@ class TypedefNode(Node):
 
     def _repr(self, short):
         return self.repr_template('{}', repr(self.base_type), short=short)
+
+
+class BitValueNode(Node):
+
+    def __init__(self, name, position=None):
+        super().__init__(name)
+        self.position = position
+
+
+class BitMaskNode(ContainerNode):
+
+    def __init__(self, name, bit_bound=None):
+        super().__init__(name)
+        self.bit_bound = bit_bound
 
 
 class NodeVisitor:

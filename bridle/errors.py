@@ -52,7 +52,7 @@ class SemanticError(LocationError):
         super().__init__(location, fmt, *args)
 
 
-class RedefintionError(SemanticError):
+class RedefinitionError(SemanticError):
     """\
     Happens when a node has the same name as an existing node when it
     shouldn't. This is allowed when the two nodes are modules (assuming the

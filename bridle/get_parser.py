@@ -6,6 +6,7 @@ from .idl import IdlParser
 valid_args = set((
     'includes',
     'defines',
+    'dump_tokens',
     'dump_raw_tree',
     'dump_tree',
     'debug_parser',
@@ -29,12 +30,15 @@ def add_type_file_argument_parsing(argparser, **override_defaults):
     argparser.add_argument('-D', '--define', dest='defines',
         action='append', default=[], metavar='NAME=VALUE',
         help='Define macro value for the preprocessor.')
+    argparser.add_argument('--dump-tokens',
+        action='store_true',
+        help='Dump tokens before parsing them')
     argparser.add_argument('--dump-raw-tree',
         action='store_true',
-        help='Dump tree as parsed by Lark.')
+        help='Dump tree right after parsing')
     argparser.add_argument('--dump-tree',
         action='store_true',
-        help='Dump processed tree.')
+        help='Dump finalized tree')
     argparser.add_argument('--debug-parser',
         action='store_true',
         help='Trace parser matching rules')

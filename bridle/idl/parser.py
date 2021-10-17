@@ -159,10 +159,8 @@ class IdlParser(Parser):
             #     m = line_regex.fullmatch(pps)
             #     if m:
             #         self.stream.loc().set_line(m.group(2), int(m.group(1)))
-            # elif c == '@' and annotations and not self.stream.in_annotation:
-            #     self.m_annotation_appl()
-            #     # TODO: Connect to setting
-            #     # print('Ignored Annotation:', appl)
+            elif t.kind is TokenKind.at and annotations and not self.stream.in_annotation:
+                self.stream.push_annotation(self.m_annotation_appl())
             else:
                 break
 
@@ -292,14 +290,12 @@ class IdlParser(Parser):
 
     @nontrivial_rule
     def m_scoped_name(self):
-        rv = []
+        parts = []
         absolute = self.m_token_maybe(TokenKind.scope_sep)
-        if absolute:
-            rv.append(absolute)
-        rv.append(self.m_identifier())
+        parts.append(self.m_identifier())
         while self.m_token_maybe(TokenKind.scope_sep):
-            rv.append(self.m_identifier())
-        return rv
+            parts.append(self.m_identifier())
+        return tree.ScopedName(parts, absolute)
 
     @nontrivial_rule
     def m_const_dcl(self):
@@ -340,8 +336,13 @@ class IdlParser(Parser):
             'wide_string_literal',
         ))
 
+    @nontrivial_rule
     def m_const_expr(self):
-        return self.m_literal()
+        # TODO: Real Rules
+        return self.match((
+            'literal',
+            'scoped_name',
+        ))
 
     def m_positive_int_const(self):
         return self.m_const_expr()
@@ -392,20 +393,20 @@ class IdlParser(Parser):
     @nontrivial_rule
     def m_integer_type(self):
         return tree.PrimitiveNode(self.m_token_seqs({
-            TokenKind.INT8: tree.PrimitiveKind.i8,
-            TokenKind.UINT8: tree.PrimitiveKind.u8,
-            TokenKind.INT16: tree.PrimitiveKind.i16,
-            TokenKind.SHORT: tree.PrimitiveKind.i16,
-            TokenKind.UINT16: tree.PrimitiveKind.u16,
-            (TokenKind.UNSIGNED, TokenKind.SHORT): tree.PrimitiveKind.u16,
-            TokenKind.INT32: tree.PrimitiveKind.i32,
-            TokenKind.LONG: tree.PrimitiveKind.i32,
-            TokenKind.UINT32: tree.PrimitiveKind.u32,
-            (TokenKind.UNSIGNED, TokenKind.LONG): tree.PrimitiveKind.u32,
-            TokenKind.INT64: tree.PrimitiveKind.i64,
-            (TokenKind.LONG, TokenKind.LONG): tree.PrimitiveKind.i64,
-            TokenKind.UINT64: tree.PrimitiveKind.u64,
             (TokenKind.UNSIGNED, TokenKind.LONG, TokenKind.LONG): tree.PrimitiveKind.u64,
+            TokenKind.UINT64: tree.PrimitiveKind.u64,
+            (TokenKind.LONG, TokenKind.LONG): tree.PrimitiveKind.i64,
+            TokenKind.INT64: tree.PrimitiveKind.i64,
+            (TokenKind.UNSIGNED, TokenKind.LONG): tree.PrimitiveKind.u32,
+            TokenKind.UINT32: tree.PrimitiveKind.u32,
+            TokenKind.LONG: tree.PrimitiveKind.i32,
+            TokenKind.INT32: tree.PrimitiveKind.i32,
+            (TokenKind.UNSIGNED, TokenKind.SHORT): tree.PrimitiveKind.u16,
+            TokenKind.UINT16: tree.PrimitiveKind.u16,
+            TokenKind.SHORT: tree.PrimitiveKind.i16,
+            TokenKind.INT16: tree.PrimitiveKind.i16,
+            TokenKind.UINT8: tree.PrimitiveKind.u8,
+            TokenKind.INT8: tree.PrimitiveKind.i8,
         }))
 
     def m_char_type(self):
@@ -467,8 +468,10 @@ class IdlParser(Parser):
     def m_constr_type_dcl(self):
         return self.match((
             'struct_dcl',
-            # TODO: 'union_dcl',
+            'union_dcl',
             'enum_dcl',
+            # TODO 'bitset_decl',
+            'bitmask_dcl',
         ))
 
     @nontrivial_rule
@@ -510,18 +513,29 @@ class IdlParser(Parser):
 
     @nontrivial_rule
     def m_union_dcl(self):
-        # TODO: union_def, union_forward_dcl
-        self.m_exact('union')
-        name = self.m_identifier()
-        union = tree.UnionNode()
-        union.name = name
-        if self.m_exact_maybe('switch'):
-            self.m_exact('(')
-            union.disc_type = self.m_switch_type_spec()
-            self.m_exact(')')
-            self.m_begin_scope()
-            cases, _ = self.match_until(('case'), ('end_scope'))
-            union.add_child(cases)
+        return self.match((
+            'union_def',
+            'union_forward_dcl',
+        ))
+
+    @nontrivial_rule
+    def m_union_def(self):
+        self.m_token(TokenKind.UNION)
+        union = tree.UnionNode(self.m_identifier())
+        self.m_token(TokenKind.SWITCH)
+        self.m_token(TokenKind.lparens)
+        union.disc_type = self.m_switch_type_spec()
+        self.m_token(TokenKind.rparens)
+        self.m_begin_scope()
+        cases, _ = self.match_until(('case'), ('end_scope'))
+        union.add_children(cases)
+        return union
+
+    @nontrivial_rule
+    def m_union_forward_dcl(self):
+        self.m_token(TokenKind.UNION)
+        union = tree.UnionNode(self.m_identifier())
+        union.forward_dcl = True
         return union
 
     @nontrivial_rule
@@ -531,23 +545,37 @@ class IdlParser(Parser):
             'char_type',
             'boolean_type',
             'scoped_name',
+            # Building Block Extended Data-Types
+            'wide_char_type',
+            'octet_type',
         ))
 
     @nontrivial_rule
     def m_case(self):
-        rv = self.match_until(('case_label'), ('element_spec'))
-        self.m_exact(';')
+        case_labels, element_spec = self.match_until(('case_label'), ('element_spec'))
+        type_spec, declarator = element_spec
+        rv = tree.UnionBranchNode(declarator.name, declarator.get_type(type_spec))
+        for is_default_case, value in case_labels:
+            if is_default_case:
+                rv.is_default_branch = True
+            else:
+                rv.cases.append(value)
+        self.m_token(TokenKind.semicolon)
         return rv
 
     @nontrivial_rule
     def m_case_label(self):
-        rv = [self.m_exact((
-            'case',
-            'default',
-        ))]
-        if rv[0] == 'case':
-            rv.append(self.const_expr())
-        self.m_exact(':')
+        branch_kind_token = self.m_token(
+            TokenKind.CASE,
+            TokenKind.DEFAULT,
+        )
+        if branch_kind_token.kind == TokenKind.CASE:
+            rv = (False, self.m_const_expr())
+        elif branch_kind_token.kind == TokenKind.DEFAULT:
+            rv = (True, None)
+        else:
+            assert False, "Should be CASE or DEFAULT"
+        self.m_token(TokenKind.colon)
         return rv
 
     @nontrivial_rule
@@ -617,24 +645,26 @@ class IdlParser(Parser):
     @nontrivial_rule
     def m_declarator(self):
         return self.match((
-            'simple_declarator',  # Building Block Core Data Types
+            # Fliped from spec because otherwise array_declarator would never
+            # match when it needs to.
             'array_declarator',  # Building Block Anonymous Types
+            'simple_declarator',  # Building Block Core Data Types
         ))
 
     # Building Block Annotations ==============================================
 
     @nontrivial_rule
     def m_annotation_appl_params(self):
-        self.m_exact('(')
+        self.m_token(TokenKind.lparens)
         rv = self.match(('annotation_appl_named_params', 'const_expr'))
-        self.m_exact(')')
+        self.m_token(TokenKind.rparens)
         return rv
 
     @nontrivial_rule
     def m_annotation_appl(self):
         self.stream.in_annotation = True
         try:
-            self.m_exact('@')
+            self.m_token(TokenKind.at)
             name = self.m_scoped_name()
             params = self.m_annotation_appl_params_maybe()
             if params is None:
@@ -648,9 +678,34 @@ class IdlParser(Parser):
     @nontrivial_rule
     def m_annotation_appl_named_param(self):
         name = self.m_identifier()
-        self.m_exact('=')
+        self.m_token(TokenKind.equals)
         return name, self.m_const_expr()
 
     @nontrivial_rule
     def m_annotation_appl_named_params(self):
         return self.comma_list_of(('annotation_appl_named_param'))
+
+    def get_annotations(self, name):
+        self.m_ws_before()
+        return self.stream.get_annotations(name)
+
+    def get_annotation(self, name):
+        l = self.get_annotations(name)
+        return l[-1] if l else None
+
+    # Building Block Extended Data-Types ======================================
+
+    @nontrivial_rule
+    def m_bitmask_dcl(self):
+        bit_bound = self.get_annotation('bit_bound')
+        self.m_token(TokenKind.BITMASK)
+        rv = tree.BitMaskNode(self.m_identifier(), bit_bound)
+        self.m_begin_scope()
+        rv.add_children(self.comma_list_of(('bit_value')))
+        self.m_end_scope()
+        return rv
+
+    @nontrivial_rule
+    def m_bit_value(self):
+        position = self.get_annotation('position')
+        return tree.BitValueNode(self.m_identifier(), position)

@@ -5,7 +5,6 @@
 
 const string annostr = "@topic";
 
-#if 0 // TODO
 @name
 @name(2)
 @name(x=2)
@@ -21,7 +20,6 @@ struct @before_struct_name AnnotatedStruct @after_struct_name {
 };
 
 @topic
-#endif
 struct NoModuleType {
   short value;
 };
@@ -82,6 +80,16 @@ module XModule {
   typedef long i32_array_t[4];
   typedef sequence<long> i32_unbounded_seq_t;
   typedef sequence<long, 4> i32_bounded_seq_t;
+
+  union UnionTypeOverInt switch (uint8) {
+  case 0:
+    uint8 x;
+  case 1:
+  case 2:
+    XTypeA y;
+  default:
+    i32_unbounded_seq_t z;
+  };
 
   struct XTypeB {
     NoModuleType no_module;

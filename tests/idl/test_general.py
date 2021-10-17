@@ -17,6 +17,10 @@ class IdlFileTests(unittest.TestCase):
             [test_path / 'general_test.idl'], warn_about_unsupported_annotations=False,
             debug_all_parsing=True)
 
+    def test_xtypes_type_object_idl(self):
+        idl_parser.parse(
+            [test_path / 'xtypes-type-object.idl'], warn_about_unsupported_annotations=False)
+
 
 # TODO
 @unittest.skip("TODO")
