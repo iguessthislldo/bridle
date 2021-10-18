@@ -13,12 +13,17 @@ from ..log import print_location_error
 
 
 class IdlFile:
+    direct_count = 0
+
     def __init__(self, path=None, direct_input=None):
         if direct_input is not None and path is None:
-            self.path = '__DIRECT_INPUT__'
+            self.direct_count += 1
+            self.path = '__DIRECT_INPUT_{}__'.format(self.direct_count)
+            self.source_key = self.direct_count
             self.idl_file_contents = direct_input
         elif path is not None and direct_input is None:
             self.path = Path(path)
+            self.source_key = self.path.resolve()
             self.idl_file_contents = self.path.read_text()
         else:
             raise ValueError('Either path or direct_input must be set. Not both or neither.')
@@ -36,8 +41,26 @@ class IdlFile:
             raise ErrorsReported('Preprocessor failed')
         self.contents = sio.getvalue()
 
-    def get_line(self, lineno):
-        return self.idl_file_contents.split('\n')[lineno - 1]
+
+class SourceLines:
+    def __init__(self):
+        self.sources = {}
+
+    def add_text_source(self, key, text):
+        self.sources[key] = text.split('\n')
+
+    def add_path_source(self, path):
+        if not isinstance(path, Path):
+            raise TypeError('Dont know what to do with ' + repr(path))
+        self.add_text_source(path, path.read_text())
+
+    def add_idl_file_source(self, idl_file):
+        self.add_text_source(idl_file.source_key, idl_file.idl_file_contents)
+
+    def get_line(self, source_key, lineno):
+        if source_key not in self.sources and isinstance(source_key, Path):
+            self.add_path_source(source_key)
+        return self.sources[source_key][lineno - 1]
 
 
 class Declarator:
@@ -73,6 +96,7 @@ class IdlParser(Parser):
         ]])
         self.tokenizer = IdlTokenizer()
         self.tree = None
+        self.source_lines = SourceLines()
 
     def parse_idl(self, settings, idl_file):
         # Preprocessor Phase
@@ -90,10 +114,11 @@ class IdlParser(Parser):
             location_error_handler = None
         else:
             def location_error_handler(self, error):
-                print_location_error(error, idl_file.get_line(error.location.line))
+                line = self.source_lines.get_line(error.location.source_key, error.location.line)
+                print_location_error(error, line)
                 raise ErrorsReported('Syntax error occurred')
         name = idl_file.name()
-        tokens = self.tokenizer.tokenize(idl_file.contents, name,
+        tokens = self.tokenizer.tokenize(idl_file.contents, name, idl_file.source_key,
             debug=settings['debug_tokenizer'],
             parse_error_handler=location_error_handler,
         )
@@ -101,7 +126,7 @@ class IdlParser(Parser):
             dump_tokens(tokens)
 
         # Parse the Tokens into a Tree
-        root = self._parse(tokens, name, over_chars=False,
+        root = self._parse(tokens, name, idl_file.source_key, over_chars=False,
             debug=settings['debug_parser'],
             parse_error_handler=location_error_handler)
         if settings['dump_raw_tree']:
@@ -128,7 +153,9 @@ class IdlParser(Parser):
         idl_files = [IdlFile(path=path) for path in paths] + \
             [IdlFile(direct_input=s) for s in direct_inputs]
         roots = []
+        settings['source_lines'] = SourceLines()
         for idl_file in idl_files:
+            self.source_lines.add_idl_file_source(idl_file)
             roots.append(self.parse_idl(settings, idl_file))
         return roots
 

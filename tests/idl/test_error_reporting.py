@@ -1,9 +1,12 @@
 import unittest
+from pathlib import Path
 
 import bridle
+from bridle.idl.parser import SourceLines
 from bridle.errors import ParseError
 
 idl_parser = bridle.IdlParser(raise_parse_errors=True)
+test_path = Path(__file__).parent
 
 
 class ErrorReportingTests(unittest.TestCase):
@@ -14,3 +17,12 @@ class ErrorReportingTests(unittest.TestCase):
                 const unsigned unsigned unsigned long x = 0;
                 '''])
         self.assertEqual(cm.exception.location.col, 32)
+
+    def test_error_inside_include(self):
+        with self.assertRaises(ParseError) as cm:
+            idl_parser.parse(includes=[test_path], direct_inputs=['''\
+                #include <invalid_file.idl>
+                '''])
+        ex = cm.exception
+        self.assertEqual(SourceLines().get_line(ex.location.source_key, ex.location.line),
+            "const long x == 1;")

@@ -16,12 +16,12 @@ class Stream:
     keeping track of the furthest error.
     """
 
-    def __init__(self, source, name, over_strings):
+    def __init__(self, source, name, source_key, over_strings):
         self.over_strings = over_strings
         self.iters = [PeekIter(source, return_strings=over_strings)]
-        self.locs = [Location(source=name)]
+        self.locs = [Location(source=name, source_key=source_key)]
         self.furthest_errors = [None]
-        self.furthest_error_locs = [Location(source=name)]
+        self.furthest_error_locs = [Location(source=name, source_key=source_key)]
         self.in_annotation = False
         self.annotation_appls = [[]]
 
@@ -136,8 +136,8 @@ class Parser:
     using match().
     """
 
-    def _parse(self, source, name, over_chars, debug=False, parse_error_handler=None):
-        self.stream = Stream(source, name, over_chars)
+    def _parse(self, source, name, source_key, over_chars, debug=False, parse_error_handler=None):
+        self.stream = Stream(source, name, source_key, over_chars)
         self.debug_this_parser = debug
         furthest_error = None
         try:

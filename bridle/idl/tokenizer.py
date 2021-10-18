@@ -1,6 +1,7 @@
 import re
 import enum
 from string import hexdigits, octdigits
+from pathlib import Path
 
 from ..errors import ExpectedError, ParseError
 from ..utils import Location
@@ -67,7 +68,7 @@ def set_location_from_line_statement(loc, text):
     m = line_regex.fullmatch(text)
     if m:
         lineno, filename = m.groups()
-        loc.set_line(filename, int(lineno) - 1)
+        loc.set_line(filename, Path(filename), int(lineno) - 1)
         # It's lineno - 1 to account for the newline after this
         return True
     return False
@@ -659,8 +660,11 @@ class IdlTokenizer(Parser):
             tokens.append(token)
         return tokens
 
-    def tokenize(self, source, name='Unknown', debug=False, parse_error_handler=None):
-        return self._parse(source, name, over_chars=True, debug=debug,
+    def tokenize(self, source, name='Unknown', source_key=None, debug=False,
+            parse_error_handler=None):
+        if source_key is None:
+            source_key = source
+        return self._parse(source, name, source_key, over_chars=True, debug=debug,
             parse_error_handler=parse_error_handler)
 
 
