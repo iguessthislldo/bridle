@@ -326,11 +326,12 @@ class ContainerNode(Node):
     def trim_children(self):
         if self.trimmed:
             return
-        for name, child in self.children_dict.items():
-            if isinstance(child, ContainerNode):
-                child.trim_children()
-            if child.marked_for_trim:
-                del self.children_dict[name]
+        if self.children_dict is not None:
+            for name, child in self.children_dict.items():
+                if isinstance(child, ContainerNode):
+                    child.trim_children()
+                if child.marked_for_trim:
+                    del self.children_dict[name]
         new_children = []
         for child in self.children:
             if isinstance(child, ContainerNode):
@@ -356,7 +357,7 @@ class ContainerNode(Node):
         self.emplace_nodes(self.children)
 
     def trim_phase(self):
-        self.trim_children(self.children)
+        self.trim_children()
 
     def accept(self, visitor):
         for child in self.children:
@@ -408,6 +409,8 @@ class Tree(ModuleNode):
         if self.errors:
             self.report_errors(self.errors)
             raise ErrorsReported('Semantic errors were found')
+
+        self.trim_phase()
 
     def _repr(self, short):
         return self.repr_template('{}', self.loc, short=short)
