@@ -1,4 +1,5 @@
 import itertools
+from pathlib import Path
 
 from rich.tree import Tree as RichTree
 from rich.table import Table as RichTable
@@ -6,6 +7,9 @@ from rich.console import Console as RichConsole
 from rich.theme import Theme as RichTheme
 
 from bridle.tree import PrimitiveNode
+from bridle.get_parser import add_type_file_argument_parsing, get_parser
+from bridle.errors import ErrorsReported
+from bridle.log import error_exit
 
 from .serializer import Serializer
 
@@ -102,3 +106,25 @@ class DataDumper:
             '\n' + '\n'.join(raw_data_entries),
         )
         self.console.print(table)
+
+
+def dump_data(args):
+    parser = get_parser(args)
+    try:
+        trees = parser.parse(args.type_files)
+    except ErrorsReported as e:
+        error_exit(str(e))
+
+    DataDumper(trees).dump(args.data_file.read_bytes(), args.topic_type_name)
+
+
+def add_dump_data_subcmd(subcmds):
+    subcmd = subcmds.add_parser('dump-data', help='Describe a serialized sample of a type')
+    subcmd.set_defaults(subcmd=dump_data)
+    subcmd.add_argument('topic_type_name',
+        metavar='TOPIC_TYPE_NAME',
+        help='Name of the topic/base/top-level type')
+    subcmd.add_argument('data_file',
+        metavar='DATA_FILE', type=Path,
+        help='CDR File')
+    add_type_file_argument_parsing(subcmd)
