@@ -2,9 +2,9 @@ from pathlib import Path
 
 
 class Location:
-    def __init__(self, other=None, source=None, source_key=None, source_only=False):
+    def __init__(self, other=None, source=None, source_key=None, source_only=False, line=None):
         if other is None:
-            self.line = 1
+            self.line = 1 if line is None else line
             self.col = 1
             self._length = 1
             self.abspos = 1
@@ -13,7 +13,7 @@ class Location:
             if source is not None and source_key is None:
                 raise ValueError('Location source_key must be set if source is set')
         else:
-            self.line = other.line
+            self.line = other.line if line is None else line
             self.col = other.col
             self._length = other._length
             self.abspos = other.abspos

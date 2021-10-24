@@ -3,7 +3,7 @@ from pathlib import Path
 
 import bridle
 from bridle.idl.parser import SourceLines
-from bridle.errors import ParseError
+from bridle.errors import ParseError, PreprocessorError
 
 idl_parser = bridle.IdlParser(raise_parse_errors=True)
 test_path = Path(__file__).parent
@@ -26,3 +26,13 @@ class ErrorReportingTests(unittest.TestCase):
         ex = cm.exception
         self.assertEqual(SourceLines().get_line(ex.location.source_key, ex.location.line),
             "const long x == 1;")
+
+    def test_nonexistent_include(self):
+        line = "#include <nonexistent_include.idl>"
+        with self.assertRaises(PreprocessorError) as cm:
+            idl_parser.parse(direct_inputs=[line])
+        ex = cm.exception
+        loc = ex.location
+        self.assertEqual(loc.line, 1)
+        self.assertEqual(loc.length, len(line))
+        self.assertEqual(idl_parser.source_lines.get_line(loc.source_key, loc.line), line)

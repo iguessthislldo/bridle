@@ -1,10 +1,11 @@
 from pathlib import Path
 from io import StringIO
+import re
 
 from pcpp import Preprocessor
 
 from ..utils import Location, is_sequence
-from ..errors import ErrorsReported, ExpectedError
+from ..errors import ErrorsReported, ExpectedError, PreprocessorError
 from .. import tree
 from ..parser import Parser, nontrivial_rule
 from .tokenizer import IdlTokenizer, Token, TokenKind, dump_tokens, \
@@ -38,11 +39,19 @@ class IdlFile:
         preprocessor.parse(self.idl_file_contents, str(self.path))
         preprocessor.write(sio)
         if preprocessor.return_code != 0:
-            raise ErrorsReported('Preprocessor failed')
+            raise ErrorsReported('Uncaught Preprocessor Error')
         self.contents = sio.getvalue()
 
 
+direct_input_re = re.compile(r'^__DIRECT_INPUT_(\d+)__$')
+
+
 class SourceLines:
+    """\
+    Helper class for getting lines for diagnostic messages that show lines.
+    Keys should be unique.
+    """
+
     def __init__(self):
         self.sources = {}
 
@@ -58,9 +67,32 @@ class SourceLines:
         self.add_text_source(idl_file.source_key, idl_file.idl_file_contents)
 
     def get_line(self, source_key, lineno):
+        if isinstance(source_key, str):
+            m = direct_input_re.match(source_key)
+            if m:
+                source_key = int(m[1])
+            else:
+                source_key = Path(source_key).resolve()
         if source_key not in self.sources and isinstance(source_key, Path):
             self.add_path_source(source_key)
         return self.sources[source_key][lineno - 1]
+
+
+class IdlPreprocessor(Preprocessor):
+    def __init__(self, source_lines, location_error_handler):
+        self.source_lines = source_lines
+        self.location_error_handler = location_error_handler
+        super().__init__()
+
+    def on_error(self, file, line, msg):
+        try:
+            loc = Location(source=file, source_key=file, line=line)
+            loc.set_length(self.source_lines.get_line(file, line))
+            raise PreprocessorError(loc, '{}', msg)
+        except PreprocessorError as e:
+            if self.location_error_handler is None:
+                raise
+            self.location_error_handler(self, e)
 
 
 class Declarator:
@@ -99,8 +131,16 @@ class IdlParser(Parser):
         self.source_lines = SourceLines()
 
     def parse_idl(self, settings, idl_file):
+        if settings['raise_parse_errors']:
+            location_error_handler = None
+        else:
+            def location_error_handler(self, error):
+                line = self.source_lines.get_line(error.location.source_key, error.location.line)
+                print_location_error(error, line)
+                raise ErrorsReported('Syntax error occurred')
+
         # Preprocessor Phase
-        preprocessor = Preprocessor()
+        preprocessor = IdlPreprocessor(self.source_lines, location_error_handler)
         for include in settings['includes']:
             preprocessor.add_path(include)
         for define in self.builtin_defines + settings['defines']:
@@ -110,13 +150,6 @@ class IdlParser(Parser):
             print(idl_file.contents)
 
         # Parse the Text into Tokens
-        if settings['raise_parse_errors']:
-            location_error_handler = None
-        else:
-            def location_error_handler(self, error):
-                line = self.source_lines.get_line(error.location.source_key, error.location.line)
-                print_location_error(error, line)
-                raise ErrorsReported('Syntax error occurred')
         name = idl_file.name()
         tokens = self.tokenizer.tokenize(idl_file.contents, name, idl_file.source_key,
             debug=settings['debug_tokenizer'],

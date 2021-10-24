@@ -32,6 +32,11 @@ class LocationError(BridleError):
         super().__init__(fmt, *args, location=location)
 
 
+class PreprocessorError(LocationError):
+    def __init__(self, location, fmt, *args):
+        super().__init__(location, fmt, *args)
+
+
 class ParseError(LocationError):
     def __init__(self, location, fmt, *args):
         super().__init__(location, fmt, *args)
