@@ -11,12 +11,10 @@ program_name = Path(sys.argv[0]).name
 
 
 def print_location_error(error, line=None, file=sys.stderr):
-    if line is not None:
-        syntax = rich.syntax.Syntax(line, "omg-idl", start_line=error.location.line)
     errcon.print(escape(str(error.location)), style='bold', end='')
     errcon.print(error_marker, escape(error.message_without_location))
     if line is not None:
-        errcon.print(syntax)
+        errcon.print(rich.syntax.Syntax(line, "omg-idl", start_line=error.location.line))
         errcon.print(' ' * (error.location.col - 1), '^', '~' * (error.location.length - 1),
             style='bold red', sep='')
 

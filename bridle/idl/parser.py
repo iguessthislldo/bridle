@@ -153,7 +153,6 @@ class IdlParser(Parser):
         idl_files = [IdlFile(path=path) for path in paths] + \
             [IdlFile(direct_input=s) for s in direct_inputs]
         roots = []
-        settings['source_lines'] = SourceLines()
         for idl_file in idl_files:
             self.source_lines.add_idl_file_source(idl_file)
             roots.append(self.parse_idl(settings, idl_file))

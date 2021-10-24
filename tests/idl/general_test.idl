@@ -41,7 +41,7 @@ module XModule {
 
       enum EnumType {
         A,
-/* Try to force the preproccesor to put in a line statment.
+/* Try to force the preprocessor to put in a line statement.
  *
  *
  *
