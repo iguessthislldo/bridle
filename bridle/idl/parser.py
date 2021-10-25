@@ -16,11 +16,15 @@ from ..log import print_location_error
 class IdlFile:
     direct_count = 0
 
-    def __init__(self, path=None, direct_input=None):
+    def __init__(self, path=None, direct_input=None, effective_path=None):
         if direct_input is not None and path is None:
-            self.direct_count += 1
-            self.path = '__DIRECT_INPUT_{}__'.format(self.direct_count)
-            self.source_key = self.direct_count
+            if effective_path is None:
+                self.direct_count += 1
+                self.path = '__DIRECT_INPUT_{}__'.format(self.direct_count)
+                self.source_key = self.direct_count
+            else:
+                self.path = Path(effective_path)
+                self.source_key = self.path.resolve()
             self.idl_file_contents = direct_input
         elif path is not None and direct_input is None:
             self.path = Path(path)
@@ -172,7 +176,7 @@ class IdlParser(Parser):
 
         return root
 
-    def parse(self, paths=[], direct_inputs=[], **kw):
+    def parse(self, paths=[], direct_inputs=[], effective_path=None, **kw):
         settings = self.default_settings.copy()
         settings.update(kw)
         if settings['debug_all']:
@@ -184,7 +188,7 @@ class IdlParser(Parser):
             settings['dump_tree'] = True
 
         idl_files = [IdlFile(path=path) for path in paths] + \
-            [IdlFile(direct_input=s) for s in direct_inputs]
+            [IdlFile(direct_input=s, effective_path=effective_path) for s in direct_inputs]
         roots = []
         for idl_file in idl_files:
             self.source_lines.add_idl_file_source(idl_file)

@@ -12,4 +12,9 @@ setup(
         'pygments>=2.8',
         'rich',
     ],
+    extras_require={
+        'lsp': [
+            'pygls>=0.11',
+        ],
+    },
 )
