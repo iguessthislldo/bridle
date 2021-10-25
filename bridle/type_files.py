@@ -1,6 +1,9 @@
 from pathlib import Path
 
 from .idl import IdlParser
+from .errors import ErrorsReported
+from .log import error_exit
+from .itl import parse_itl_files
 
 
 valid_args = set((
@@ -22,7 +25,7 @@ def check_kwargs(kwargs):
 def add_type_file_argument_parsing(argparser, **override_defaults):
     argparser.add_argument('type_files',
         metavar='TYPE_FILE', type=Path, nargs='+',
-        help='OMG IDL File(s)')
+        help='OMG IDL or OpenDDS ITL File(s)')
     argparser.add_argument('-I', '--include', dest='includes',
         type=Path, action='append', default=[],
         metavar='DIR_PATH',
@@ -51,9 +54,25 @@ def add_type_file_argument_parsing(argparser, **override_defaults):
     argparser.set_defaults(**override_defaults)
 
 
-def get_parser(parsed_args, **override_values):
+def get_idl_parser(parsed_args, **override_values):
     parsed_args_dict = vars(parsed_args)
     parser_args = {k: parsed_args_dict[k] for k in valid_args}
     check_kwargs(override_values)
     parser_args.update(override_values)
     return IdlParser(**parser_args)
+
+
+def type_files_to_trees(parsed_args, **override_values):
+    idl_parser = get_idl_parser(parsed_args, **override_values)
+    trees = []
+    for type_file in parsed_args.type_files:
+        if type_file.suffix == '.idl':
+            try:
+                trees.append(idl_parser.parse([type_file])[0])
+            except ErrorsReported as e:
+                error_exit(str(e))
+        elif type_file.suffix == '.itl':
+            trees.append(parse_itl_files([type_file]))
+        else:
+            error_exit("Don't know what kind of file {} is".format(repr(type_file)))
+    return trees

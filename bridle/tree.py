@@ -192,7 +192,7 @@ class Node:
 
     def __init__(self, name=None, parent=None, loc=None):
         self.name = name
-        self.scoped_name = None
+        self._scoped_name = None
         self.parent = parent
         self.loc = loc
         self.tree = None
@@ -206,6 +206,16 @@ class Node:
     @name.setter
     def name(self, new):
         self._name = str(new) if new else None
+
+    @property
+    def scoped_name(self):
+        return self._scoped_name
+
+    @scoped_name.setter
+    def scoped_name(self, new):
+        if new.parts:
+            self._name = new.parts[-1]
+        self._scoped_name = new
 
     # Only Usable in Syntactic Phase ------------------------------------------
 
@@ -497,12 +507,10 @@ class EnumeratorNode(Node):
 
 
 class EnumNode(ContainerNode):
-    # TODO: The members should be nodes themselves like StructNode
 
     def __init__(self, size=None):
         super().__init__()
         self.size = size
-        self.members = {}
         self.default_member = None
 
     def accept(self, visitor):
