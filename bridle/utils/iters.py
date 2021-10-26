@@ -5,8 +5,9 @@ characters in a string or any arbitrary objects in an iterable.
 
 
 class BaseIter:
-    def __init__(self, return_strings):
-        self.return_strings = return_strings
+    def __init__(self, peek_iter, pos):
+        self.peek_iter = peek_iter
+        self.pos = pos
 
     def __iter__(self):
         return self
@@ -16,7 +17,7 @@ class BaseIter:
         return value
 
     def return_values(self, values):
-        return ''.join(values) if self.return_strings else values
+        return ''.join(values) if self.peek_iter.return_strings else values
 
     def advance(self, arg=1):
         if isinstance(arg, BaseIter):
@@ -52,10 +53,10 @@ class PeekIter(BaseIter):
     """
 
     def __init__(self, iterable, return_strings=False):
-        super().__init__(return_strings)
+        super().__init__(peek_iter=self, pos=0)
         self.it = iter(iterable)
+        self.return_strings = return_strings
         self.cache = []
-        self.pos = 0
 
     def _next(self):
         if self.cache:
@@ -85,17 +86,15 @@ class ChainedIter(BaseIter):
     the parent to the child's position.
     """
 
-    def __init__(self, orig):
-        super().__init__(orig.return_strings)
-        self.orig = orig
-        self.pos = orig.pos
+    def __init__(self, parent):
+        super().__init__(parent.peek_iter, parent.pos)
 
     def _next(self):
-        maybe = self.orig.peek(start=self.pos)
+        maybe = self.peek_iter.peek(start=self.pos)
         if maybe:
             self.pos += 1
             return maybe[0]
         raise StopIteration
 
     def _peek(self, count, start=None):
-        return self.orig.peek(count, start)
+        return self.peek_iter.peek(count, start)

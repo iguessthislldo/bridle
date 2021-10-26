@@ -664,8 +664,10 @@ class IdlTokenizer(Parser):
             parse_error_handler=None):
         if source_key is None:
             source_key = source
-        return self._parse(source, name, source_key, over_chars=True, debug=debug,
-            parse_error_handler=parse_error_handler)
+        return self._parse(source, name, source_key, over_chars=True,
+            debug=debug,
+            parse_error_handler=parse_error_handler,
+        )
 
 
 def dump_tokens(tokens):

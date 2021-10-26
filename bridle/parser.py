@@ -4,6 +4,8 @@ fit a series of matching rules. These elements are characters in the case of
 IdlTokenizer and tokens in the case of IdlParser.
 """
 
+from functools import wraps
+
 from .utils import PeekIter, ChainedIter, Location
 from .errors import ParseError
 
@@ -118,13 +120,20 @@ class Stream:
         return rv
 
 
-def nontrivial_rule(method):
+def rule_name(rule_method):
+    return rule_method.__name__[2:]
+
+
+def nontrivial_rule(rule_method):
     """\
     Decorator for rule methods in Parser subclasses that sets up the rule as a
     place to check if a series of nested rules has failed.
     """
-    return lambda self, *args, **kwargs: self.rule_wrapper(
-        method, method.__name__[2:], False, *args, **kwargs)
+    @wraps(rule_method)
+    def wrapper(self, *args, **kwargs):
+        return self.rule_wrapper(
+            rule_method, rule_name(rule_method), False, *args, **kwargs)
+    return wrapper
 
 
 class Parser:
@@ -159,6 +168,8 @@ class Parser:
 
     def assert_not_end(self, what):
         if self.stream.done():
+            if callable(what):
+                what = what()
             raise ParseError(self.stream.loc(),
                 'Expected {}, but reached end of input', ' or '.join(what))
 
@@ -195,6 +206,13 @@ class Parser:
             return lambda *args, **kwargs: self.rule_wrapper(obj, name, True, *args, **kwargs)
         return obj
 
+    def match_single_rule(self, rule, args):
+        try:
+            value = getattr(self, 'm_' + rule)(*args)
+            return True, value
+        except ParseError:
+            return False, None
+
     def match(self, rules):
         if isinstance(rules, str):
             rules = {rules: []}
@@ -202,8 +220,7 @@ class Parser:
             rules = {rule: [] for rule in rules}
         loc = Location(self.stream.loc())
         for rule, args in rules.items():
-            try:
-                return getattr(self, 'm_' + rule)(*args)
-            except ParseError:
-                pass
-        raise ParseError(loc, 'Expected ' + ' or '.join(rules))
+            matched, value = self.match_single_rule(rule, args)
+            if matched:
+                return value
+        raise ParseError(loc, 'Expected ' + ' or '.join([str(r) for r in rules]))

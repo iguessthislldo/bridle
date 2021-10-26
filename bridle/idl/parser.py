@@ -165,7 +165,8 @@ class IdlParser(Parser):
         # Parse the Tokens into a Tree
         root = self._parse(tokens, name, idl_file.source_key, over_chars=False,
             debug=settings['debug_parser'],
-            parse_error_handler=location_error_handler)
+            parse_error_handler=location_error_handler,
+        )
         if settings['dump_raw_tree']:
             root.dump()
 
@@ -237,16 +238,24 @@ class IdlParser(Parser):
     def m_token(self, *token_kinds, ws_before=True, ws_after=True):
         if ws_before:
             self.m_ws_before()
-        help_strings = [str(tk) for tk in token_kinds]
-        self.assert_not_end(help_strings)
+        get_help_strings = lambda: [str(tk) for tk in token_kinds]
+        self.assert_not_end(get_help_strings)
         loc = Location(self.stream.loc())
         token = next(self.stream)[0]
         if token.kind not in token_kinds:
             loc.set_length(token)
-            raise ExpectedError(loc, help_strings, repr(token))
+            raise ExpectedError(loc, get_help_strings(), repr(token))
         if ws_after:
             self.m_ws_after()
         return token
+
+    def match_single_rule(self, rule, args):
+        if isinstance(rule, TokenKind):
+            try:
+                return True, self.m_token(rule)
+            except ExpectedError:
+                return False, None
+        return super().match_single_rule(rule, args)
 
     @nontrivial_rule
     def m_token_seq(self, token_seq, result):
@@ -257,7 +266,6 @@ class IdlParser(Parser):
     @nontrivial_rule
     def m_token_seqs(self, token_seqs):
         token_seqs = {(k,) if not is_sequence(k) else k: v for k, v in token_seqs.items()}
-        help_strings = [repr(' '.join([str(k) for k in i])) for i in token_seqs.keys()]
         loc = Location(self.stream.loc())
         rv = None
         for token_seq, result in token_seqs.items():
@@ -265,6 +273,7 @@ class IdlParser(Parser):
             if rv is not None:
                 break
         if rv is None:
+            help_strings = [repr(' '.join([str(k) for k in i])) for i in token_seqs.keys()]
             raise ExpectedError(loc, help_strings, self.stream.peek())
         return rv
 
