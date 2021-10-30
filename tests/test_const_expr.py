@@ -1,7 +1,7 @@
 import unittest
 
 from bridle.errors import InternalError, ConstExprError
-from bridle.idl.const_expr import Op, ConstExpr, ConstValue
+from bridle.const_expr import Op, ConstExpr, ConstValue
 from bridle.tree import PrimitiveKind
 
 

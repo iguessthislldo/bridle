@@ -6,9 +6,11 @@ from typing import Any, Optional
 import inspect
 import string
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from ..errors import ConstExprError, InternalError
-from ..tree import PrimitiveKind
+from .errors import ConstExprError, InternalError
+if TYPE_CHECKING:
+    from .tree import PrimitiveKind
 
 
 class ConstAbc(ABC):
@@ -16,7 +18,7 @@ class ConstAbc(ABC):
         return None
 
     @abstractmethod
-    def eval(self, to: PrimitiveKind):
+    def eval(self, to: 'PrimitiveKind'):
         pass
 
     @abstractmethod
@@ -28,7 +30,7 @@ class ConstAbc(ABC):
 
 
 class ConstValue(ConstAbc):
-    def __init__(self, value: Any, kind: PrimitiveKind):
+    def __init__(self, value: Any, kind: 'PrimitiveKind'):
         kind.check_value(value)
         self.value = value
         self.kind = kind
@@ -36,7 +38,7 @@ class ConstValue(ConstAbc):
     def uncasted_kind(self):
         return self.kind
 
-    def eval(self, to: PrimitiveKind) -> Any:
+    def eval(self, to: 'PrimitiveKind') -> Any:
         if to != self.kind:
             to.check_value(self.value)
         return self.value
@@ -74,11 +76,11 @@ class OpTraits:
         return impl_count
 
 
-def divide_impl(to: PrimitiveKind, a, b) -> Any:
+def divide_impl(to: 'PrimitiveKind', a, b) -> Any:
     return (pyop.truediv if to.value.is_float else pyop.floordiv)(a, b)
 
 
-def invert_impl(to: PrimitiveKind, value) -> Any:
+def invert_impl(to: 'PrimitiveKind', value) -> Any:
     if to.value.is_signed_int:
         return -(value + 1)
     return to.value.max_number_like - value
@@ -100,7 +102,7 @@ class Op(enum.Enum):
     INVERT = OpTraits(fmt='~{}', impl=None, type_impl=invert_impl, accepts_floats=False)
     PRIORITIZE = OpTraits(fmt='({})', impl=lambda a: a)
 
-    def impl(self, to: PrimitiveKind, operands) -> Callable:
+    def impl(self, to: 'PrimitiveKind', operands) -> Callable:
         add_to, impl = self.value.impl_details
         if add_to:
             return impl(to, *operands)
@@ -133,7 +135,7 @@ class ConstExpr(ConstAbc):
         self.op = op
         self.operands = operands
 
-    def eval(self, to: PrimitiveKind):
+    def eval(self, to: 'PrimitiveKind'):
         if not to.value.can_op:
             raise ConstExprError('Not possible to do operations to get to {}', to)
         operand_values = []
