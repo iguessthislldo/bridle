@@ -131,7 +131,6 @@ class IdlParser(Parser):
             '_IDL_VERSION_MINOR=2',
         ]])
         self.tokenizer = IdlTokenizer()
-        self.tree = None
         self.source_lines = SourceLines()
 
     def parse_idl(self, settings, idl_file):
@@ -163,7 +162,8 @@ class IdlParser(Parser):
             dump_tokens(tokens)
 
         # Parse the Tokens into a Tree
-        root = self._parse(tokens, name, idl_file.source_key, over_chars=False,
+        root = self._parse(
+            tokens, name, idl_file.source_key, over_chars=False,
             debug=settings['debug_parser'],
             parse_error_handler=location_error_handler,
         )
@@ -218,11 +218,6 @@ class IdlParser(Parser):
             elif t.kind is TokenKind.preprocessor_statement:
                 self.stream.advance()
                 set_location_from_line_statement(self.stream.loc(), t.text)
-            # elif c == '#':  # TODO: Make sure this is a valid location?
-            #     pps = self.get_preprocessor_statement()
-            #     m = line_regex.fullmatch(pps)
-            #     if m:
-            #         self.stream.loc().set_line(m.group(2), int(m.group(1)))
             elif t.kind is TokenKind.at and annotations and not self.stream.in_annotation:
                 self.stream.push_annotation(self.m_annotation_appl())
             else:
@@ -704,7 +699,7 @@ class IdlParser(Parser):
     @nontrivial_rule
     def m_any_declarator(self):
         return self.match((
-            # Fliped from spec because otherwise array_declarator would never
+            # Flipped from spec because otherwise array_declarator would never
             # match when it needs to.
             'array_declarator',
             'simple_declarator',
@@ -717,7 +712,7 @@ class IdlParser(Parser):
     @nontrivial_rule
     def m_declarator(self):
         return self.match((
-            # Fliped from spec because otherwise array_declarator would never
+            # Flipped from spec because otherwise array_declarator would never
             # match when it needs to.
             'array_declarator',  # Building Block Anonymous Types
             'simple_declarator',  # Building Block Core Data Types
@@ -755,7 +750,7 @@ class IdlParser(Parser):
 
     @nontrivial_rule
     def m_annotation_appl_named_params(self):
-        return self.comma_list_of(('annotation_appl_named_param'))
+        return self.comma_list_of('annotation_appl_named_param')
 
     def get_annotations(self, name):
         self.m_ws_before()
