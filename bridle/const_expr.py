@@ -18,6 +18,10 @@ class ConstAbc(ABC):
         return None
 
     @abstractmethod
+    def can_eval(self):
+        pass
+
+    @abstractmethod
     def eval(self, to: 'PrimitiveKind'):
         pass
 
@@ -37,6 +41,9 @@ class ConstValue(ConstAbc):
 
     def uncasted_kind(self):
         return self.kind
+
+    def can_eval(self):
+        return self.value is not None
 
     def eval(self, to: 'PrimitiveKind') -> Any:
         if to != self.kind:
@@ -134,6 +141,12 @@ class ConstExpr(ConstAbc):
                 op.name, expected_count, len(operands))
         self.op = op
         self.operands = operands
+
+    def can_eval(self):
+        for operand in self.operands:
+            if not operand.can_eval():
+                return False
+        return True
 
     def eval(self, to: 'PrimitiveKind'):
         if not to.value.can_op:

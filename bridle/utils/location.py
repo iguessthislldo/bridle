@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 class Location:
@@ -72,3 +73,31 @@ class Location:
 
     def short_str(self):
         return self._str(full_path=False, col=False)
+
+    direct_count = 0
+
+    @classmethod
+    def make_new_source_key(cls, path=None, effective_path=None):
+        if path is None:
+            if effective_path is None:
+                cls.direct_count += 1
+                path = '__DIRECT_INPUT_{}__'.format(cls.direct_count)
+                source_key = cls.direct_count
+            else:
+                path = Path(effective_path).resolve()
+                source_key = path.resolve()
+        else:
+            source_key = path = Path(path)
+        return path, source_key
+
+    direct_input_re = re.compile(r'^__DIRECT_INPUT_(\d+)__$')
+
+    @classmethod
+    def get_source_key(cls, source_key):
+        if isinstance(source_key, str):
+            m = cls.direct_input_re.match(source_key)
+            if m:
+                source_key = int(m[1])
+            else:
+                source_key = Path(source_key).resolve()
+        return source_key

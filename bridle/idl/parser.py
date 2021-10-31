@@ -1,12 +1,16 @@
 from pathlib import Path
 from io import StringIO
-import re
 
 from pcpp import Preprocessor
 
 from ..utils import Location, is_sequence
-from ..errors import ErrorsReported, ExpectedError, PreprocessorError
+from ..errors import (
+    ErrorsReported,
+    ExpectedError,
+    PreprocessorError,
+)
 from .. import tree
+from ..const_expr import ConstValue, Op, ConstExpr
 from ..parser import Parser, nontrivial_rule
 from .tokenizer import IdlTokenizer, Token, TokenKind, dump_tokens, \
     set_location_from_line_statement
@@ -14,21 +18,13 @@ from ..log import print_location_error
 
 
 class IdlFile:
-    direct_count = 0
 
     def __init__(self, path=None, direct_input=None, effective_path=None):
+        self.path, self.source_key = Location.make_new_source_key(
+            path=path, effective_path=effective_path)
         if direct_input is not None and path is None:
-            if effective_path is None:
-                self.direct_count += 1
-                self.path = '__DIRECT_INPUT_{}__'.format(self.direct_count)
-                self.source_key = self.direct_count
-            else:
-                self.path = Path(effective_path)
-                self.source_key = self.path.resolve()
             self.idl_file_contents = direct_input
         elif path is not None and direct_input is None:
-            self.path = Path(path)
-            self.source_key = self.path.resolve()
             self.idl_file_contents = self.path.read_text()
         else:
             raise ValueError('Either path or direct_input must be set. Not both or neither.')
@@ -45,9 +41,6 @@ class IdlFile:
         if preprocessor.return_code != 0:
             raise ErrorsReported('Uncaught Preprocessor Error')
         self.contents = sio.getvalue()
-
-
-direct_input_re = re.compile(r'^__DIRECT_INPUT_(\d+)__$')
 
 
 class SourceLines:
@@ -71,12 +64,7 @@ class SourceLines:
         self.add_text_source(idl_file.source_key, idl_file.idl_file_contents)
 
     def get_line(self, source_key, lineno):
-        if isinstance(source_key, str):
-            m = direct_input_re.match(source_key)
-            if m:
-                source_key = int(m[1])
-            else:
-                source_key = Path(source_key).resolve()
+        source_key = Location.get_source_key(source_key)
         if source_key not in self.sources and isinstance(source_key, Path):
             self.add_path_source(source_key)
         return self.sources[source_key][lineno - 1]
@@ -233,7 +221,10 @@ class IdlParser(Parser):
     def m_token(self, *token_kinds, ws_before=True, ws_after=True):
         if ws_before:
             self.m_ws_before()
-        get_help_strings = lambda: [str(tk) for tk in token_kinds]
+
+        def get_help_strings():
+            return [str(tk) for tk in token_kinds]
+
         self.assert_not_end(get_help_strings)
         loc = Location(self.stream.loc())
         token = next(self.stream)[0]
@@ -274,7 +265,8 @@ class IdlParser(Parser):
 
     @nontrivial_rule
     def m_boolean_literal(self):
-        return self.m_token(TokenKind.boolean).value
+        return ConstValue(self.m_token(TokenKind.boolean).value,
+            tree.PrimitiveKind.boolean)
 
     @nontrivial_rule
     def m_identifier(self):
@@ -282,27 +274,33 @@ class IdlParser(Parser):
 
     @nontrivial_rule
     def m_floating_pt_literal(self):
-        return self.m_token(TokenKind.floating_point).value
+        return ConstValue(self.m_token(TokenKind.floating_point).value,
+            tree.PrimitiveKind.f128)
 
     @nontrivial_rule
     def m_integer_literal(self):
-        return self.m_token(TokenKind.integer).value
+        return ConstValue(self.m_token(TokenKind.integer).value,
+            tree.PrimitiveKind.u128)
 
     @nontrivial_rule
     def m_character_literal(self):
-        return self.m_token(TokenKind.char).value
+        return ConstValue(self.m_token(TokenKind.char).value,
+            tree.PrimitiveKind.c8)
 
     @nontrivial_rule
     def m_wide_character_literal(self):
-        return self.m_token(TokenKind.wchar).value
+        return ConstValue(self.m_token(TokenKind.wchar).value,
+            tree.PrimitiveKind.c16)
 
     @nontrivial_rule
     def m_string_literal(self):
-        return self.m_token(TokenKind.string).value
+        return ConstValue(self.m_token(TokenKind.string).value,
+            tree.PrimitiveKind.s8)
 
     @nontrivial_rule
     def m_wide_string_literal(self):
-        return self.m_token(TokenKind.wstring).value
+        return ConstValue(self.m_token(TokenKind.wstring).value,
+            tree.PrimitiveKind.s16)
 
     def m_begin_scope(self):
         return self.m_token(TokenKind.lbrace)
@@ -403,13 +401,84 @@ class IdlParser(Parser):
             'wide_string_literal',
         ))
 
-    @nontrivial_rule
     def m_const_expr(self):
-        # TODO: Real Rules
+        return self.m_or_expr()
+
+    def expr_helper(self, this_rule, next_rule, op_tokens):
+        expr = self.match(next_rule)
+        while True:
+            op = self.m_token_seqs_maybe(op_tokens)
+            if not op:
+                break
+            expr = ConstExpr(op, expr, self.match(next_rule))
+        return expr
+
+    @nontrivial_rule
+    def m_or_expr(self):
+        return self.expr_helper('or_expr', 'xor_expr', {
+            TokenKind.pipe: Op.OR,
+        })
+
+    @nontrivial_rule
+    def m_xor_expr(self):
+        return self.expr_helper('xor_expr', 'and_expr', {
+            TokenKind.carrot: Op.XOR,
+        })
+
+    @nontrivial_rule
+    def m_and_expr(self):
+        return self.expr_helper('and_expr', 'shift_expr', {
+            TokenKind.ampersand: Op.AND,
+        })
+
+    @nontrivial_rule
+    def m_shift_expr(self):
+        return self.expr_helper('shift_expr', 'add_expr', {
+            TokenKind.rshift: Op.RSHIFT,
+            TokenKind.lshift: Op.LSHIFT,
+        })
+
+    @nontrivial_rule
+    def m_add_expr(self):
+        return self.expr_helper('add_expr', 'mult_expr', {
+            TokenKind.plus: Op.ADD,
+            TokenKind.minus: Op.SUBTRACT,
+        })
+
+    @nontrivial_rule
+    def m_mult_expr(self):
+        return self.expr_helper('mult_expr', 'unary_expr', {
+            TokenKind.astreisk: Op.MULTIPLY,
+            TokenKind.slash: Op.DIVIDE,
+            TokenKind.percent: Op.MODULO,
+        })
+
+    @nontrivial_rule
+    def m_unary_expr(self):
+        op = self.m_token_seqs_maybe({
+            TokenKind.minus: Op.NEGATIVE,
+            TokenKind.plus: Op.POSITIVE,
+            TokenKind.tilde: Op.INVERT,
+        })
+        pe = self.m_primary_expr()
+        if op is not None:
+            return ConstExpr(op, pe)
+        return pe
+
+    @nontrivial_rule
+    def m_primary_expr(self):
         return self.match((
-            'literal',
             'scoped_name',
+            'literal',
+            'priority',
         ))
+
+    @nontrivial_rule
+    def m_priority(self):
+        self.m_token(TokenKind.lparens)
+        rv = self.m_const_expr()
+        self.m_token(TokenKind.rparens)
+        return rv
 
     def m_positive_int_const(self):
         return self.m_const_expr()

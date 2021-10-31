@@ -1,7 +1,6 @@
 import re
 import enum
 from string import hexdigits, octdigits
-from pathlib import Path
 
 from ..errors import ExpectedError, ParseError
 from ..utils import Location
@@ -67,8 +66,8 @@ line_regex = re.compile(r'\s*#\s*line\s+(\d+)(?:\s+"(.*)")?')
 def set_location_from_line_statement(loc, text):
     m = line_regex.fullmatch(text)
     if m:
-        lineno, filename = m.groups()
-        loc.set_line(filename, Path(filename), int(lineno) - 1)
+        lineno, path = m.groups()
+        loc.set_line(path, Location.get_source_key(path), int(lineno) - 1)
         # It's lineno - 1 to account for the newline after this
         return True
     return False
@@ -215,6 +214,8 @@ class TokenKind(enum.Enum):
     minus = Punctuation('-')
     lparens = Punctuation('(')
     rparens = Punctuation(')')
+    lshift = Punctuation('<<')
+    rshift = Punctuation('>>')
     less_than = Punctuation('<')
     greater_than = Punctuation('>')
     lbrace = Punctuation('{')

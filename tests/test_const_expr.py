@@ -79,4 +79,7 @@ class ConstExprTests(unittest.TestCase):
         with self.assertRaisesRegex(ConstExprError, '300 is outside valid range for u8'):
             self.h(E(Op.MULTIPLY, 30, 10), V(0, PrimitiveKind.u8))
 
+    def test_byte_241(self):
+        self.h(V(241, PrimitiveKind.byte), V(241, PrimitiveKind.i64))
+
     # TODO: More Complete Tests

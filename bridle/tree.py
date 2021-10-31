@@ -7,6 +7,7 @@ import typing
 
 from .utils import is_sequence, Location
 from .errors import InternalError, ErrorsReported, RedefinitionError
+from .const_expr import ConstAbc
 
 # TODO: Separate IDL processing into separate file?
 
@@ -124,8 +125,8 @@ class PrimitiveTraits:
 
 @enum.unique
 class PrimitiveKind(enum.Enum):
-    boolean = PrimitiveTraits(element_size=8, is_bool=True)
-    byte = PrimitiveTraits(element_size=8, bound_element_size=1, is_raw=True)
+    boolean = PrimitiveTraits(element_size=8, bound_element_size=1, is_bool=True)
+    byte = PrimitiveTraits(element_size=8, is_raw=True)
     u8 = PrimitiveTraits(element_size=8, is_unsigned_int=True)
     i8 = PrimitiveTraits(element_size=8, is_signed_int=True)
     u16 = PrimitiveTraits(element_size=16, is_unsigned_int=True)
@@ -551,19 +552,55 @@ class SequenceNode(Node):
             "max " + str(self.max_count) if self.max_count else "no max", short=short)
 
 
-class ConstantNode(Node):
+class ConstantNode(Node, ConstAbc):
 
     def __init__(self, primitive_node):
         super().__init__()
         self.primitive_node = primitive_node
-        self.value = None
+        self._value = None
+        self._raw_value = None
+
+    def uncasted_kind(self):
+        # TODO
+        if isinstance(self.primitive_node, ScopedName):
+            return None
+        return self.primitive_node.kind
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, new_value):
+        self._raw_value = new_value
+        if self.can_eval():
+            self._value = self.eval(self.uncasted_kind())
+        else:
+            self._value = None
+
+    def can_eval(self):
+        if self._value is not None:
+            return True
+        elif self.uncasted_kind() is None:
+            return False
+        elif isinstance(self._raw_value, ConstAbc):
+            return self._raw_value.can_eval()
+        return False
+
+    def eval(self, to: PrimitiveKind):
+        if self._value is None:
+            self._value = self._raw_value.eval(to)
+        return self._value
 
     def accept(self, visitor):
         visitor.visit_constant(self)
 
+    def __str__(self):
+        return str(self._value)
+
     def _repr(self, short):
         return self.repr_template(
-            '{} = {}', repr(self.primitive_node), repr(self.value), short=short)
+            '{} = {}', repr(self.primitive_node), repr(self), short=short)
 
 
 class UnionBranchNode(FieldNode):

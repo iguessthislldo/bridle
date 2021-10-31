@@ -3,7 +3,8 @@ import unittest
 import bridle
 from bridle.tree import ConstantNode, PrimitiveNode, PrimitiveKind
 
-idl_parser = bridle.IdlParser()
+
+idl_parser = bridle.IdlParser(raise_parse_errors=True)
 
 
 class ConstantsTests(unittest.TestCase):
@@ -17,7 +18,13 @@ class ConstantsTests(unittest.TestCase):
         self.assertIsInstance(node.primitive_node, PrimitiveNode)
         self.assertEqual(node.primitive_node.kind, primitive_kind)
         self.assertEqual(node.primitive_node.element_count_limit, limit)
-        self.assertEqual(node.value, value)
+        self.assertTrue(node.can_eval())
+        self.assertEqual(node.eval(node.primitive_node.kind), value)
+
+    def h(self, idl, **values):
+        tree = idl_parser.parse(direct_inputs=[idl])[0]
+        for name, value in values.items():
+            self.check(tree, name, value, PrimitiveKind.i16)
 
     def test_int_literals(self):
         tree = idl_parser.parse(direct_inputs=['''\
@@ -55,51 +62,49 @@ class ConstantsTests(unittest.TestCase):
         self.check(tree, 'c1', 'c', PrimitiveKind.c8)
         # TODO: More cases
 
-    @unittest.skip("TODO")
     def test_const_expr_ops_basic(self):
-        idl_parser.parse(direct_inputs=['''\
-            /*@bridle::assert_value(3)*/
+        self.h('''\
             const short or_value = 2 | 1;
-            /*@bridle::assert_value(2)*/
             const short xor_value = 3 ^ 1;
-            /*@bridle::assert_value(1)*/
             const short and_value = 3 & 1;
-            /*@bridle::assert_value(8)*/
             const short shift_left_value = 1 << 3;
-            /*@bridle::assert_value(2)*/
             const short shift_right_value = 16 >> 3;
-            /*@bridle::assert_value(0xEF)*/
             const short add_value = 0x0E + 0xE1;
-            /*@bridle::assert_value(44)*/
             const short sub_value = 88 - 44;
-            /*@bridle::assert_value(18)*/
             const short mul_value = 3 * 6;
-            /*@bridle::assert_value(5)*/
             const short div_value = 25 / 5;
-            /*@bridle::assert_value(1)*/
             const short rem_value = 33 % 2;
-            /*@bridle::assert_value(364)*/
             const short paren_value = (364);
-            /*@bridle::assert_value(10)*/
             const short negative_negative_value = -(-10);
-            /*@bridle::assert_value(-10)*/
             const short positive_positive_value = +(-10);
-            /*@bridle::assert_value(-4)*/
             const short inverse_value = ~3;
-            /*@bridle::assert_value(-4)*/
-            const float inverse_value = ~3;
-            '''])
+            ''',
+            or_value=3,
+            xor_value=2,
+            and_value=1,
+            shift_left_value=8,
+            shift_right_value=2,
+            add_value=0xEF,
+            sub_value=44,
+            mul_value=18,
+            div_value=5,
+            rem_value=1,
+            paren_value=364,
+            negative_negative_value=10,
+            positive_positive_value=-10,
+            inverse_value=-4,
+        )
 
-    @unittest.skip("TODO")
     def test_const_expr_ops(self):
-        idl_parser.parse(direct_inputs=['''\
-            /*@bridle::assert_value(9)*/
+        self.h('''\
             const short expr1 = 1 + 2 + 3 + 4 - 1;
-            /*@bridle::assert_value(10)*/
             const short expr2 = 4 * 2 + 6 / 2 - 7 % 6;
-            /*@bridle::assert_value(3)*/
             const short expr3 = (4 * (2 + 6) / 2 - 7) % 6;
-            '''])
+            ''',
+            expr1=9,
+            expr2=10,
+            expr3=3,
+        )
 
     # TODO
     # @unittest.expectedFailure
