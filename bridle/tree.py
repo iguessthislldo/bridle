@@ -282,7 +282,7 @@ class Node:
 class ContainerNode(Node):
 
     def __init__(self, name=None, parent=None, loc=None):
-        super().__init__(name, parent, loc)
+        Node.__init__(self, name, parent, loc)
         self.children = []
         self.children_dict = None
         self.trimmed = False
@@ -379,6 +379,20 @@ class ContainerNode(Node):
         level += 1
         for child in self.children:
             child.dump(level)
+
+
+class ForwardDclNode(Node):
+
+    def __init__(self, forward_dcl):
+        self.forward_dcl = forward_dcl
+
+    def handle_possible_redefinition(self, new_node):
+        if isinstance(new_node, type(self)):
+            if new_node.forward_dcl:
+                return Action.trim_new
+            elif self.forward_dcl:
+                return Action.trim_old
+        return super().handle_possible_redefinition(new_node)
 
 
 class ModuleNode(ContainerNode):
@@ -494,10 +508,11 @@ class FieldNode(Node):
         return self.repr_template(repr(self.type_node), short=short)
 
 
-class StructNode(ContainerNode):
+class StructNode(ContainerNode, ForwardDclNode):
 
-    def __init__(self, name):
-        super().__init__(name)
+    def __init__(self, name, forward_dcl=False):
+        ContainerNode.__init__(self, name)
+        ForwardDclNode.__init__(self, forward_dcl)
 
     def accept(self, visitor):
         visitor.visit_struct(self)
@@ -611,26 +626,18 @@ class UnionBranchNode(FieldNode):
         self.is_default_branch = False
 
 
-class UnionNode(ContainerNode):
+class UnionNode(ContainerNode, ForwardDclNode):
 
-    def __init__(self, name):
-        super().__init__(name)
+    def __init__(self, name, forward_dcl=False):
+        ContainerNode.__init__(self, name)
+        ForwardDclNode.__init__(self, forward_dcl)
         self.disc_type = None
-        self.forward_dcl = False
 
     def accept(self, visitor):
         visitor.visit_union(self)
 
     def _repr(self, short):
         return self.repr_template('{}', repr(self.disc_type), short=short)
-
-    def handle_possible_redefinition(self, new_node):
-        if isinstance(new_node, UnionNode):
-            if new_node.forward_dcl:
-                return Action.trim_new
-            elif self.forward_dcl:
-                return Action.trim_old
-        return super.handle_possible_redefinition(new_node)
 
 
 class TypedefNode(Node):
@@ -660,6 +667,41 @@ class BitMaskNode(ContainerNode):
         self.bit_bound = bit_bound
 
 
+class ParameterAttr(enum.Enum):
+    In = enum.auto()
+    Out = enum.auto()
+    InOut = enum.auto()
+
+
+class ParameterNode(Node):
+
+    def __init__(self, name, attr, type):
+        super().__init__(name)
+        self.attr = attr
+        self.type = type
+
+    def _repr(self, short):
+        return self.repr_template('{} {}', self.attr.name, repr(self.type), short=short)
+
+
+class OpNode(ContainerNode):
+
+    def __init__(self, name, return_type):
+        super().__init__(name)
+        self.return_type = return_type
+
+
+class InterfaceNode(ContainerNode, ForwardDclNode):
+
+    def __init__(self, name, forward_dcl=False, local=False):
+        ContainerNode.__init__(self, name)
+        ForwardDclNode.__init__(self, forward_dcl)
+        self.local = local
+
+    def accept(self, visitor):
+        visitor.visit_interface(self)
+
+
 class NodeVisitor:
 
     def visit_root_module(self, root_module):
@@ -687,4 +729,7 @@ class NodeVisitor:
         raise NotImplementedError
 
     def visit_typedef(self, typedef_type):
+        raise NotImplementedError
+
+    def visit_interface(self, node):
         raise NotImplementedError

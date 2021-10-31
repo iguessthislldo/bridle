@@ -106,6 +106,9 @@ class IdlParser(Parser):
         debug_tokenizer=False, dump_tokens=False,
         debug_parser=False, dump_raw_tree=False, dump_tree=False,
         raise_parse_errors=False,
+        # Extensions
+        allow_empty_modules=False,
+        allow_trailing_comma=False,
     )
 
     def __init__(self, **kw):
@@ -175,6 +178,7 @@ class IdlParser(Parser):
             settings['debug_parser'] = True
             settings['dump_raw_tree'] = True
             settings['dump_tree'] = True
+        self.settings = settings
 
         idl_files = [IdlFile(path=path) for path in paths] + \
             [IdlFile(direct_input=s, effective_path=effective_path) for s in direct_inputs]
@@ -184,11 +188,37 @@ class IdlParser(Parser):
             roots.append(self.parse_idl(settings, idl_file))
         return roots
 
-    def comma_list_of(self, element_rules):
-        rv = [self.match(element_rules)]
-        while self.m_token_maybe(TokenKind.comma) is not None:
-            rv.append(self.match(element_rules))
+    def comma_list_of(self, repeating_rules, terminating_token_kind=None, at_least_one=True):
+        rv = []
+        if at_least_one:
+            first = self.match(repeating_rules)
+        else:
+            first = self.match_maybe(repeating_rules)
+            if first is None:
+                return rv
+        rv.append(first)
+        allow_trailing_comma = \
+            self.settings['allow_trailing_comma'] and terminating_token_kind is not None
+        while True:
+            if self.m_token_maybe(TokenKind.comma) is None:
+                break
+            if allow_trailing_comma:
+                t = self.stream.peek()[0]
+                if t.kind is terminating_token_kind:
+                    break
+            rv.append(self.match(repeating_rules))
         return rv
+
+    def match_until(self, repeating_rules, terminating_rules, at_least_one=True):
+        repeating_results = []
+        if at_least_one:
+            repeating_results.append(self.match(repeating_rules))
+        while True:
+            repeating_result = self.match_maybe(repeating_rules)
+            if repeating_result is not None:
+                repeating_results.append(repeating_result)
+            else:
+                return repeating_results, self.match(terminating_rules)
 
     def get_preprocessor_statement(self):
         line = ''
@@ -314,6 +344,22 @@ class IdlParser(Parser):
     def m_end_scope(self):
         return self.m_token(self.end_scope)
 
+    def dcl_header_check_forward(self, token_kind):
+        self.m_token(token_kind)
+        name = self.m_identifier()
+        self.assert_not_end(lambda: [str(TokenKind.semicolon)])
+        next_token = self.stream.peek()[0]
+        return name, next_token.kind is TokenKind.semicolon
+
+    def add_children_in_scope(self, parent, child_rules, at_least_one=True):
+        self.m_begin_scope()
+        children, _ = self.match_until(child_rules, 'end_scope', at_least_one)
+        for c in children:
+            if isinstance(c, list):
+                parent.add_children(c)
+            else:
+                parent.add_child(c)
+
     # =========================================================================
     # The methods below should follow the names and order of the grammar rules
     # in the spec for the most part.
@@ -321,6 +367,8 @@ class IdlParser(Parser):
 
     def start(self):
         root = tree.Tree(self.stream.loc())
+        if not self.settings['allow_empty_modules']:
+            root.add_child(self.m_definition())
         while not self.stream.done():
             root.add_child(self.m_definition())
         return root
@@ -333,6 +381,8 @@ class IdlParser(Parser):
             'module_dcl',
             'const_dcl',
             'type_dcl',
+            # TODO: 'except_dcl'  # Building Block Interfaces - Basic
+            'interface_dcl'  # Building Block Interfaces - Basic
         ))
         self.m_token(TokenKind.semicolon)
         return rv
@@ -341,16 +391,8 @@ class IdlParser(Parser):
     def m_module_dcl(self):
         self.m_token(TokenKind.MODULE)
         module = tree.ModuleNode(self.m_identifier())
-        self.m_begin_scope()
-        module.add_child(self.m_definition())
-        while True:
-            what = self.match((
-                'definition',
-                'end_scope',
-            ))
-            if self.is_end_scope(what):
-                break
-            module.add_child(what)
+        self.add_children_in_scope(module, ('definition',),
+            at_least_one=not self.settings['allow_empty_modules'])
         return module
 
     @nontrivial_rule
@@ -612,18 +654,11 @@ class IdlParser(Parser):
 
     @nontrivial_rule
     def m_struct_dcl(self):
-        # TODO: struct_def, struct_forward_dcl
-        self.m_token(TokenKind.STRUCT)
-        struct = tree.StructNode(self.m_identifier())
-        if self.m_begin_scope_maybe():
-            while True:
-                what = self.match((
-                    'member',
-                    'end_scope'
-                ))
-                if self.is_end_scope(what):
-                    break
-                struct.add_child(what)
+        name, forward_dcl = self.dcl_header_check_forward(TokenKind.STRUCT)
+        struct = tree.StructNode(name, forward_dcl=forward_dcl)
+        if forward_dcl:
+            return struct
+        self.add_children_in_scope(struct, ('member',), at_least_one=False)
         return struct
 
     @nontrivial_rule
@@ -636,42 +671,17 @@ class IdlParser(Parser):
         self.m_token(TokenKind.semicolon)
         return members
 
-    def match_until(self, repeating_rules, terminating_rules, at_least_one=True):
-        repeating_results = []
-        if at_least_one:
-            repeating_results.append(self.match(repeating_rules))
-        while True:
-            repeating_result = self.match_maybe(repeating_rules)
-            if repeating_result is not None:
-                repeating_results.append(repeating_result)
-            else:
-                return repeating_results, self.match(terminating_rules)
-
     @nontrivial_rule
     def m_union_dcl(self):
-        return self.match((
-            'union_def',
-            'union_forward_dcl',
-        ))
-
-    @nontrivial_rule
-    def m_union_def(self):
-        self.m_token(TokenKind.UNION)
-        union = tree.UnionNode(self.m_identifier())
+        name, forward_dcl = self.dcl_header_check_forward(TokenKind.UNION)
+        union = tree.UnionNode(name, forward_dcl=forward_dcl)
+        if forward_dcl:
+            return union
         self.m_token(TokenKind.SWITCH)
         self.m_token(TokenKind.lparens)
         union.disc_type = self.m_switch_type_spec()
         self.m_token(TokenKind.rparens)
-        self.m_begin_scope()
-        cases, _ = self.match_until(('case'), ('end_scope'))
-        union.add_children(cases)
-        return union
-
-    @nontrivial_rule
-    def m_union_forward_dcl(self):
-        self.m_token(TokenKind.UNION)
-        union = tree.UnionNode(self.m_identifier())
-        union.forward_dcl = True
+        self.add_children_in_scope(union, 'case')
         return union
 
     @nontrivial_rule
@@ -727,7 +737,7 @@ class IdlParser(Parser):
         enum_node = tree.EnumNode()
         enum_node.name = self.m_identifier()
         self.m_begin_scope()
-        enum_node.add_children(self.comma_list_of(('enumerator')))
+        enum_node.add_children(self.comma_list_of('enumerator', self.end_scope))
         self.m_end_scope()
         return enum_node
 
@@ -763,7 +773,7 @@ class IdlParser(Parser):
 
     @nontrivial_rule
     def m_any_declarators(self):
-        return self.comma_list_of(('any_declarator'))
+        return self.comma_list_of('any_declarator')
 
     @nontrivial_rule
     def m_any_declarator(self):
@@ -776,7 +786,7 @@ class IdlParser(Parser):
 
     @nontrivial_rule
     def m_declarators(self):
-        return self.comma_list_of(('declarator'))
+        return self.comma_list_of('declarator')
 
     @nontrivial_rule
     def m_declarator(self):
@@ -786,6 +796,58 @@ class IdlParser(Parser):
             'array_declarator',  # Building Block Anonymous Types
             'simple_declarator',  # Building Block Core Data Types
         ))
+
+    # Building Block Interfaces - Basic =======================================
+
+    # TODO: expect_dcl, attr_dcl, and friends
+
+    @nontrivial_rule
+    def m_interface_dcl(self):
+        # interface_forward_dcl / interface_header
+        # local is Building Block CORBA-Specific - Interfaces
+        local = self.m_token_maybe(TokenKind.LOCAL) is not None
+        name, forward_dcl = self.dcl_header_check_forward(TokenKind.INTERFACE)
+        interface = tree.InterfaceNode(name, forward_dcl=forward_dcl, local=local)
+        if forward_dcl:
+            return interface
+        # interface_inheritance_spec
+        if self.m_token_maybe(TokenKind.colon):
+            self.comma_list_of('scoped_name', self.end_scope)
+        # interface_body
+        self.add_children_in_scope(interface, ('export',), at_least_one=False)
+        return interface
+
+    @nontrivial_rule
+    def m_export(self):
+        rv = self.match((
+            'op_dcl',
+            # TODO: 'attr_dcl',
+        ))
+        self.m_token(TokenKind.semicolon)
+        return rv
+
+    @nontrivial_rule
+    def m_op_dcl(self):
+        return_type = self.match((
+            'type_spec',
+            TokenKind.VOID,
+        ))
+        op = tree.OpNode(self.m_identifier(), return_type)
+        self.m_token(TokenKind.lparens)
+        op.add_children(self.comma_list_of('parameter_dcl', TokenKind.rparens, at_least_one=False))
+        self.m_token(TokenKind.rparens)
+        # TODO: raises_expr
+        return op
+
+    @nontrivial_rule
+    def m_parameter_dcl(self):
+        attr = self.m_token_seqs({
+            TokenKind.IN: tree.ParameterAttr.In,
+            TokenKind.OUT: tree.ParameterAttr.Out,
+            TokenKind.INOUT: tree.ParameterAttr.InOut,
+        })
+        type = self.m_type_spec()
+        return tree.ParameterNode(self.m_simple_declarator().name, attr, type)
 
     # Building Block Annotations ==============================================
 
@@ -837,7 +899,7 @@ class IdlParser(Parser):
         self.m_token(TokenKind.BITMASK)
         rv = tree.BitMaskNode(self.m_identifier(), bit_bound)
         self.m_begin_scope()
-        rv.add_children(self.comma_list_of(('bit_value')))
+        rv.add_children(self.comma_list_of('bit_value', self.end_scope))
         self.m_end_scope()
         return rv
 
