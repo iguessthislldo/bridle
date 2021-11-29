@@ -81,7 +81,7 @@ class Config:
         else:
             self._prefix = None
             self._parent = None
-        if self._prefix is None != self._parent is None:
+        if (self._prefix is None) != (self._parent is None):
             raise ValueError('prefix and parent must both be set to None or not')
         self._stack = []
         self.push(initial_config, set_defaults=self._parent is None)

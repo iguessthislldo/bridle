@@ -674,7 +674,7 @@ class IdlTokenizer(Parser, Configurable):
             **override_config):
         if source_key is None:
             source_key = source
-        with self.config.new_ctx(override_config) as ctx:
+        with self.config.new_ctx(override_config):
             return self._parse(
                 source, name, source_key, over_chars=True,
                 debug=self.config['debug'],

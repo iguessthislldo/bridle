@@ -36,10 +36,10 @@ class TestConfigurable(unittest.TestCase):
         self.assertEqual(o.config['a'], 1)
         self.assertEqual(o.config['b'], 3)
 
-        with o.config.new_ctx(dict(b=4)) as l1:
+        with o.config.new_ctx(dict(b=4)):
             self.assertEqual(o.config['a'], 1)
             self.assertEqual(o.config['b'], 4)
-            with o.config.new_ctx(dict(a=100)) as l2:
+            with o.config.new_ctx(dict(a=100)):
                 self.assertEqual(o.config['a'], 100)
                 self.assertEqual(o.config['b'], 4)
             self.assertEqual(o.config['a'], 1)
@@ -55,14 +55,14 @@ class TestConfigurable(unittest.TestCase):
         o.config['a'] = 11
         self.assertEqual(o.config['a'], 11)
 
-        with o.config.new_ctx() as l1:
+        with o.config.new_ctx():
             self.assertEqual(o.config['a'], 11)
             self.assertEqual(o.config['b'], 3)
 
             o.config['a'] = 111
             self.assertEqual(o.config['a'], 111)
 
-            with o.config.new_ctx() as l2:
+            with o.config.new_ctx():
                 self.assertEqual(o.config['a'], 111)
                 self.assertEqual(o.config['b'], 3)
 

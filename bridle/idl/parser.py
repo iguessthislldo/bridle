@@ -173,7 +173,7 @@ class IdlParser(Parser, Configurable):
         return root
 
     def parse(self, paths=[], direct_inputs=[], effective_path=None, **override_config):
-        with self.config.new_ctx(override_config) as ctx:
+        with self.config.new_ctx(override_config):
             if self.config['debug_all']:
                 self.config['dump_pp'] = True
                 self.config['tokenizer_debug'] = True
@@ -910,7 +910,6 @@ class IdlParser(Parser, Configurable):
             for element in ignored_elements:
                 print('Ignored unsupported annotation', element)
         return ignored_elements
-
 
     # Building Block Extended Data-Types ======================================
 
