@@ -4,7 +4,7 @@ import os
 
 import bridle
 
-idl_parser = bridle.IdlParser()
+idl_parser = bridle.IdlParser(raise_parse_errors=True)
 test_path = Path(__file__).parent
 opendds_path = Path(os.environ.get('DDS_ROOT', 'OpenDDS'))
 
@@ -14,12 +14,15 @@ class IdlFileTests(unittest.TestCase):
 
     def test_general_test_idl(self):
         idl_parser.parse(
-            [test_path / 'general_test.idl'], warn_about_unsupported_annotations=False,
-            debug_all_parsing=True)
+            [test_path / 'general_test.idl'],
+            warn_about_unsupported_annotations=False,
+        )
 
     def test_xtypes_type_object_idl(self):
         idl_parser.parse(
-            [test_path / 'xtypes-type-object.idl'], warn_about_unsupported_annotations=False)
+            [test_path / 'xtypes-type-object.idl'],
+            warn_about_unsupported_annotations=False,
+        )
 
 
 # TODO
@@ -58,6 +61,7 @@ class PreprocessorTests(unittest.TestCase):
             #ifndef __BRIDLE
             Something that's not IDL
             #endif
+            const long x = 1;
             '''])
 
     @unittest.expectedFailure

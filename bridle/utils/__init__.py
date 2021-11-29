@@ -2,6 +2,7 @@ from collections.abc import Sequence
 
 from .iters import PeekIter, ChainedIter
 from .location import Location
+from .configurable import Configurable
 
 
 def is_sequence(obj):
@@ -12,4 +13,5 @@ __all__ = [
     'PeekIter', 'ChainedIter',
     'Location',
     'is_sequence',
+    'Configurable',
 ]

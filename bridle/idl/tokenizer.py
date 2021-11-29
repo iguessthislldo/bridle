@@ -3,7 +3,7 @@ import enum
 from string import hexdigits, octdigits
 
 from ..errors import ExpectedError, ParseError
-from ..utils import Location
+from ..utils import Location, Configurable
 from .parser import Parser, nontrivial_rule
 
 
@@ -350,7 +350,16 @@ class Token:
         return self._repr(short=True)
 
 
-class IdlTokenizer(Parser):
+class IdlTokenizer(Parser, Configurable):
+    @classmethod
+    def define_config_options(cls, options):
+        options.add_options(dict(
+            debug=False,
+        ))
+
+    def __init__(self, **config):
+        Configurable.__init__(self, config)
+
     def peek_chars_matching(self, match_func, perchar=False, include_last=False):
         s = ''
         while True:
@@ -661,15 +670,16 @@ class IdlTokenizer(Parser):
             tokens.append(token)
         return tokens
 
-    def tokenize(self, source, name='Unknown', source_key=None, debug=False,
-            parse_error_handler=None):
+    def tokenize(self, source, name='Unknown', source_key=None, parse_error_handler=None,
+            **override_config):
         if source_key is None:
             source_key = source
-        return self._parse(
-            source, name, source_key, over_chars=True,
-            debug=debug,
-            parse_error_handler=parse_error_handler,
-        )
+        with self.config.new_ctx(override_config) as ctx:
+            return self._parse(
+                source, name, source_key, over_chars=True,
+                debug=self.config['debug'],
+                parse_error_handler=parse_error_handler,
+            )
 
 
 def dump_tokens(tokens):

@@ -3,7 +3,7 @@ from io import StringIO
 
 from pcpp import Preprocessor
 
-from ..utils import Location, is_sequence
+from ..utils import Location, is_sequence, Configurable
 from ..errors import (
     ErrorsReported,
     ExpectedError,
@@ -97,23 +97,25 @@ class Declarator:
             else tree.ArrayNode(base_type, self.array_dims)
 
 
-class IdlParser(Parser):
-    default_default_settings = dict(
-        includes=[], defines=[],
-        warn_about_unsupported_annotations=True,
-        debug_all=False,
-        dump_pp_output=False,
-        debug_tokenizer=False, dump_tokens=False,
-        debug_parser=False, dump_raw_tree=False, dump_tree=False,
-        raise_parse_errors=False,
-        # Extensions
-        allow_empty_modules=False,
-        allow_trailing_comma=False,
-    )
+class IdlParser(Parser, Configurable):
+    @classmethod
+    def define_config_options(cls, options):
+        options.add_options(dict(
+            includes=[], defines=[],
+            warn_about_unsupported_annotations=True,
+            debug_all=False,
+            dump_pp_output=False,
+            dump_tokens=False,
+            debug_parser=False, dump_raw_tree=False, dump_tree=False,
+            raise_parse_errors=False,
+            allow_empty_modules=False,
+            allow_trailing_comma=False,
+            finalize=True,
+        ))
+        options.add_child_options('tokenizer_', IdlTokenizer)
 
-    def __init__(self, **kw):
-        self.default_settings = self.default_default_settings
-        self.default_settings.update(kw)
+    def __init__(self, **config):
+        Configurable.__init__(self, config)
         self.builtin_define_base_name = '__BRIDLE'
         self.builtin_defines = [self.builtin_define_base_name]
         self.builtin_defines.extend([self.builtin_define_base_name + i for i in [
@@ -121,11 +123,11 @@ class IdlParser(Parser):
             '_IDL_VERSION_MAJOR=4',
             '_IDL_VERSION_MINOR=2',
         ]])
-        self.tokenizer = IdlTokenizer()
+        self.tokenizer = IdlTokenizer(config_parent=('tokenizer_', self))
         self.source_lines = SourceLines()
 
-    def parse_idl(self, settings, idl_file):
-        if settings['raise_parse_errors']:
+    def parse_idl(self, idl_file):
+        if self.config['raise_parse_errors']:
             location_error_handler = None
         else:
             def location_error_handler(self, error):
@@ -135,58 +137,58 @@ class IdlParser(Parser):
 
         # Preprocessor Phase
         preprocessor = IdlPreprocessor(self.source_lines, location_error_handler)
-        for include in settings['includes']:
+        for include in self.config['includes']:
             preprocessor.add_path(include)
-        for define in self.builtin_defines + settings['defines']:
+        for define in self.builtin_defines + self.config['defines']:
             preprocessor.define(define.replace('=', ' ', 1))
         idl_file.load(preprocessor)
-        if settings['dump_pp_output']:
+        if self.config['dump_pp_output']:
             print(idl_file.contents)
 
         # Parse the Text into Tokens
         name = idl_file.name()
         tokens = self.tokenizer.tokenize(idl_file.contents, name, idl_file.source_key,
-            debug=settings['debug_tokenizer'],
+            debug=self.config['tokenizer_debug'],
             parse_error_handler=location_error_handler,
         )
-        if settings['dump_tokens']:
+        if self.config['dump_tokens']:
             dump_tokens(tokens)
 
         # Parse the Tokens into a Tree
+        self.in_annotation = False
         root = self._parse(
             tokens, name, idl_file.source_key, over_chars=False,
-            debug=settings['debug_parser'],
+            debug=self.config['debug_parser'],
             parse_error_handler=location_error_handler,
         )
-        if settings['dump_raw_tree']:
+        if self.config['dump_raw_tree']:
             root.dump()
 
         # Process the Raw Tree
-        root.finalize()
-        if settings['dump_tree']:
+        if self.config['finalize']:
+            root.finalize()
+        if self.config['dump_tree']:
             root.dump()
 
         return root
 
-    def parse(self, paths=[], direct_inputs=[], effective_path=None, **kw):
-        settings = self.default_settings.copy()
-        settings.update(kw)
-        if settings['debug_all']:
-            settings['dump_pp'] = True
-            settings['debug_tokenizer'] = True
-            settings['dump_tokens'] = True
-            settings['debug_parser'] = True
-            settings['dump_raw_tree'] = True
-            settings['dump_tree'] = True
-        self.settings = settings
+    def parse(self, paths=[], direct_inputs=[], effective_path=None, **override_config):
+        with self.config.new_ctx(override_config) as ctx:
+            if self.config['debug_all']:
+                self.config['dump_pp'] = True
+                self.config['tokenizer_debug'] = True
+                self.config['dump_tokens'] = True
+                self.config['debug_parser'] = True
+                self.config['dump_raw_tree'] = True
+                self.config['dump_tree'] = True
 
-        idl_files = [IdlFile(path=path) for path in paths] + \
-            [IdlFile(direct_input=s, effective_path=effective_path) for s in direct_inputs]
-        roots = []
-        for idl_file in idl_files:
-            self.source_lines.add_idl_file_source(idl_file)
-            roots.append(self.parse_idl(settings, idl_file))
-        return roots
+            idl_files = [IdlFile(path=path) for path in paths] + \
+                [IdlFile(direct_input=s, effective_path=effective_path) for s in direct_inputs]
+            roots = []
+            for idl_file in idl_files:
+                self.source_lines.add_idl_file_source(idl_file)
+                roots.append(self.parse_idl(idl_file))
+            return roots
 
     def comma_list_of(self, repeating_rules, terminating_token_kind=None, at_least_one=True):
         rv = []
@@ -198,7 +200,7 @@ class IdlParser(Parser):
                 return rv
         rv.append(first)
         allow_trailing_comma = \
-            self.settings['allow_trailing_comma'] and terminating_token_kind is not None
+            self.config['allow_trailing_comma'] and terminating_token_kind is not None
         while True:
             if self.m_token_maybe(TokenKind.comma) is None:
                 break
@@ -236,8 +238,8 @@ class IdlParser(Parser):
             elif t.kind is TokenKind.preprocessor_statement:
                 self.stream.advance()
                 set_location_from_line_statement(self.stream.loc(), t.text)
-            elif t.kind is TokenKind.at and annotations and not self.stream.in_annotation:
-                self.stream.push_annotation(self.m_annotation_appl())
+            elif t.kind is TokenKind.at and annotations and not self.in_annotation:
+                self.stream.push_ignored_element(self.m_annotation_appl())
             else:
                 break
 
@@ -367,7 +369,7 @@ class IdlParser(Parser):
 
     def start(self):
         root = tree.Tree(self.stream.loc())
-        if not self.settings['allow_empty_modules']:
+        if not self.config['allow_empty_modules']:
             root.add_child(self.m_definition())
         while not self.stream.done():
             root.add_child(self.m_definition())
@@ -392,7 +394,7 @@ class IdlParser(Parser):
         self.m_token(TokenKind.MODULE)
         module = tree.ModuleNode(self.m_identifier())
         self.add_children_in_scope(module, ('definition',),
-            at_least_one=not self.settings['allow_empty_modules'])
+            at_least_one=not self.config['allow_empty_modules'])
         return module
 
     @nontrivial_rule
@@ -860,7 +862,7 @@ class IdlParser(Parser):
 
     @nontrivial_rule
     def m_annotation_appl(self):
-        self.stream.in_annotation = True
+        self.in_annotation = True
         try:
             self.m_token(TokenKind.at)
             name = self.m_scoped_name()
@@ -870,7 +872,7 @@ class IdlParser(Parser):
         except Exception:
             raise
         finally:
-            self.stream.in_annotation = False
+            self.in_annotation = False
         return [name, params]
 
     @nontrivial_rule
@@ -883,19 +885,38 @@ class IdlParser(Parser):
     def m_annotation_appl_named_params(self):
         return self.comma_list_of('annotation_appl_named_param')
 
-    def get_annotations(self, name):
+    def get_annotations(self, filter_func, max_count=None):
         self.m_ws_before()
-        return self.stream.get_annotations(name)
+        elements = self.stream.get_ignored_elements()
+        indices = []
+        for i, element in enumerate(elements):
+            if filter_func(element):
+                indices.append(i)
+        if max_count is not None:
+            max_count = min(len(indices), abs(max_count))
+            indices = indices[:max_count] if max_count >= 0 else indices[max_count:]
+        return [elements.pop(i) for i in indices]
 
-    def get_annotation(self, name):
-        l = self.get_annotations(name)
-        return l[-1] if l else None
+    def get_annotations_by_name(self, name, max_count=None):
+        name = str(name)
+        return self.get_annotations(lambda e: str(e[0]) == name, max_count)
+
+    def get_annotation_by_name(self, name):
+        l = self.get_annotations_by_name(name, max_count=-1)
+        return l[0] if len(l) > 0 else None
+
+    def handle_accepted_ignored_elements(self, ignored_elements):
+        if self.config['warn_about_unsupported_annotations']:
+            for element in ignored_elements:
+                print('Ignored unsupported annotation', element)
+        return ignored_elements
+
 
     # Building Block Extended Data-Types ======================================
 
     @nontrivial_rule
     def m_bitmask_dcl(self):
-        bit_bound = self.get_annotation('bit_bound')
+        bit_bound = self.get_annotation_by_name('bit_bound')
         self.m_token(TokenKind.BITMASK)
         rv = tree.BitMaskNode(self.m_identifier(), bit_bound)
         self.m_begin_scope()
@@ -905,5 +926,5 @@ class IdlParser(Parser):
 
     @nontrivial_rule
     def m_bit_value(self):
-        position = self.get_annotation('position')
+        position = self.get_annotation_by_name('position')
         return tree.BitValueNode(self.m_identifier(), position)

@@ -24,8 +24,7 @@ class Stream:
         self.locs = [Location(source=name, source_key=source_key)]
         self.furthest_errors = [None]
         self.furthest_error_locs = [Location(source=name, source_key=source_key)]
-        self.in_annotation = False
-        self.annotation_appls = [[]]
+        self.ignored_elements = [[]]
 
     def __iter__(self):
         return self
@@ -65,7 +64,7 @@ class Stream:
         self.locs.append(Location(self.loc()))
         self.furthest_errors.append(self.furthest_errors[-1])
         self.furthest_error_locs.append(Location(self.furthest_error_locs[-1]))
-        self.annotation_appls.append([])
+        self.ignored_elements .append([])
 
     def pop(self):
         return (
@@ -73,15 +72,13 @@ class Stream:
             self.locs.pop(),
             self.furthest_errors.pop(),
             self.furthest_error_locs.pop(),
-            self.annotation_appls.pop(),
+            self.ignored_elements.pop(),
         )
 
     def accept(self):
-        it, loc, error, error_loc, anno_appls = self.pop()
-        for anno_appl in anno_appls:
-            print('IGNORED ANNOTATION:', anno_appl)
+        it, loc, error, error_loc, ignored_elements = self.pop()
         self.advance(it, loc)
-        return it, loc, error, error_loc, anno_appls
+        return it, loc, error, error_loc, ignored_elements
 
     def check_furthest_error_candidate(self, error):
         if error.location > self.furthest_error_locs[-1]:
@@ -89,11 +86,11 @@ class Stream:
             self.furthest_error_locs[-1] = error.location
 
     def reject(self, this_error):
-        it, loc, popped_error, error_loc, anno_appl = self.pop()
+        it, loc, popped_error, error_loc, ignored_elements = self.pop()
         self.check_furthest_error_candidate(this_error)
         if popped_error is not None:
             self.check_furthest_error_candidate(popped_error)
-        return it, loc, popped_error, error_loc, anno_appl
+        return it, loc, popped_error, error_loc, ignored_elements
 
     def furthest_error(self, root_error):
         if self.furthest_error_locs[0] > root_error.location and \
@@ -104,20 +101,11 @@ class Stream:
     def stack_size(self):
         return len(self.iters) - 1
 
-    def push_annotation(self, node):
-        self.annotation_appls[-1].append(node)
+    def push_ignored_element(self, element):
+        self.ignored_elements[-1].append(element)
 
-    def get_annotations(self, name):
-        rv = []
-        keep = []
-        name = str(name)
-        for anno in self.annotation_appls[-1]:
-            if str(anno[0]) == name:
-                rv.append(anno)
-            else:
-                keep.append(anno)
-        self.annotation_appls[-1] = keep
-        return rv
+    def get_ignored_elements(self):
+        return self.ignored_elements[-1]
 
 
 def rule_name(rule_method):
@@ -178,13 +166,17 @@ class Parser:
             raise ParseError(self.stream.loc(),
                 'Expected end of input, but got {}', repr(str(self.stream.peek())))
 
+    def handle_accepted_ignored_elements(self, ignored_elements):
+        pass
+
     def rule_wrapper(self, func, name, maybe, *args, **kwargs):
         if self.debug_this_parser:
             print('| ' * self.stream.stack_size() + name, args, kwargs, self.stream.loc())
         self.stream.push()
         try:
             rv = func(*args, **kwargs) if maybe else func(self, *args, **kwargs)
-            it, loc, *_ = self.stream.accept()
+            it, loc, error, error_loc, ignored_elements = self.stream.accept()
+            self.handle_accepted_ignored_elements(ignored_elements)
             if self.debug_this_parser:
                 print('| ' * self.stream.stack_size() + 'ACCEPT', loc)
             return rv
