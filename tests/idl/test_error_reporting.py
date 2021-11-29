@@ -3,7 +3,10 @@ from pathlib import Path
 
 import bridle
 from bridle.idl.parser import SourceLines
-from bridle.errors import ParseError, PreprocessorError
+from bridle.errors import (
+    ParseError,
+    PreprocessorError,
+)
 
 idl_parser = bridle.IdlParser(raise_parse_errors=True)
 test_path = Path(__file__).parent

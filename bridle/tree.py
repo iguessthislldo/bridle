@@ -6,7 +6,11 @@ import numbers
 import typing
 
 from .utils import is_sequence, Location
-from .errors import InternalError, ErrorsReported, RedefinitionError
+from .errors import (
+    InternalError,
+    ErrorsReported,
+    RedefinitionError,
+)
 from .const_expr import ConstAbc
 
 # TODO: Separate IDL processing into separate file?
@@ -246,6 +250,9 @@ class Node:
         raise NotImplementedError
 
     def trim_phase(self):
+        '''\
+        Trim nodes that are not needed anymore
+        '''
         raise NotImplementedError
 
     # Only Usable After Semantic Phases ---------------------------------------

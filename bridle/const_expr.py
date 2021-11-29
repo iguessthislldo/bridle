@@ -35,7 +35,8 @@ class ConstAbc(ABC):
 
 class ConstValue(ConstAbc):
     def __init__(self, value: Any, kind: 'PrimitiveKind'):
-        kind.check_value(value)
+        if kind is not None:
+            kind.check_value(value)
         self.value = value
         self.kind = kind
 

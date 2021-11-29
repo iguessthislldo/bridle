@@ -511,18 +511,21 @@ class IdlParser(Parser, Configurable):
 
     @nontrivial_rule
     def m_primary_expr(self):
-        return self.match((
+        rv = self.match((
             'scoped_name',
             'literal',
             'priority',
         ))
+        if isinstance(rv, tree.ScopedName):
+            rv = ConstValue(rv, None)
+        return rv
 
     @nontrivial_rule
     def m_priority(self):
         self.m_token(TokenKind.lparens)
         rv = self.m_const_expr()
         self.m_token(TokenKind.rparens)
-        return rv
+        return ConstExpr(Op.PRIORITIZE, rv)
 
     def m_positive_int_const(self):
         return self.m_const_expr()

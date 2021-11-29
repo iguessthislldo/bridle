@@ -107,7 +107,7 @@ class ConstantsTests(unittest.TestCase):
         )
 
     # TODO
-    # @unittest.expectedFailure
+    @unittest.expectedFailure
     def test_const_expr_references(self):
         idl_parser.parse(direct_inputs=['''\
             const short const1 = 0;
