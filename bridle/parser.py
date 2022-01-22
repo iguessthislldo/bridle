@@ -5,6 +5,8 @@ IdlTokenizer and tokens in the case of IdlParser.
 """
 
 from functools import wraps
+import re
+import inspect
 
 from .utils import PeekIter, ChainedIter, Location
 from .errors import ParseError
@@ -118,13 +120,151 @@ def nontrivial_rule(rule_method):
     place to check if a series of nested rules has failed.
     """
     @wraps(rule_method)
-    def wrapper(self, *args, **kwargs):
+    def rule_wrapper_wrapper(self, *args, **kwargs):
         return self.rule_wrapper(
             rule_method, rule_name(rule_method), False, *args, **kwargs)
-    return wrapper
+    return rule_wrapper_wrapper
 
 
-class Parser:
+class RuleContext:
+    def __init__(self, parser, maybe=False, get_debug_info=None):
+        self.parser = parser
+        self.maybe = maybe
+        self.get_debug_info = (lambda: '') if get_debug_info is None else get_debug_info
+
+    def indent(self):
+        return '| ' * self.parser.stream.stack_size()
+
+    def __enter__(self):
+        if self.parser.debug_this_parser:
+            print(self.indent() + self.get_debug_info(), self.parser.stream.loc())
+        self.parser.stream.push()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if exc_type is None:
+            it, loc, error, error_loc, ignored_elements = self.parser.stream.accept()
+            self.parser.handle_accepted_ignored_elements(ignored_elements)
+            if self.parser.debug_this_parser:
+                print(self.indent() + 'ACCEPT', loc)
+        elif isinstance(exc_value, ParseError):
+            self.parser.stream.reject(exc_value)
+            if self.parser.debug_this_parser:
+                print(self.indent() + 'REJECT:',
+                    exc_value, self.parser.stream.furthest_error_locs[-1])
+            if self.maybe:
+                return True
+        else:
+            assert False
+
+
+class Rule:
+    def __init__(self, name, trivial):
+        self.name = name
+        self.trivial = trivial
+        self.initialized = False
+        self.initializing = False
+        self.child_rules = None
+        self.child_rule_methods = None
+        self.child_rule_insts = None
+
+    def init_child_rules(self, all_rules, child_names):
+        self.child_rules = {}
+        self.child_rule_methods = {}
+        self.child_rule_insts = {}
+        for child_name in child_names:
+            child = all_rules[child_name]
+            self.child_rules[child_name] = child
+            if isinstance(child, Rule):
+                child.init(all_rules)
+                self.child_rule_insts[child_name] = child
+            else:
+                self.child_rule_methods[child_name] = child
+
+    def init_impl(self, all_rules):
+        """\
+        Use this to collect information about other rules.
+        """
+        raise NotImplementedError
+
+    def init(self, all_rules):
+        if self.initialized:
+            return
+        if self.initializing:
+            raise RuntimeError("Cycle in rule " + self.name)
+        initializing = True
+        self.init_impl(all_rules)
+        initializing = False
+        self.initialized = True
+
+    def match_impl(self, parser_inst):
+        raise NotImplementedError
+
+    def match(self, parser_inst):
+        if self.trivial:
+            return self.match_impl(parser_inst)
+        else:
+            with RuleContext(parser_inst, False, lambda: self.name):
+                return self.match_impl(parser_inst)
+        assert False
+
+    def __call__(self, parser_inst):
+        return self.match(parser_inst)
+
+
+match_rule_re = re.compile(r'(?:m|Rule)_(\w+)')
+
+
+def get_rule_maybe_wrapper(name, rule):
+    @wraps(rule)
+    def rule_maybe_wrapper(self, *args, **kwargs):
+        return self.rule_wrapper(rule, name, True, *args, **kwargs)
+    return rule_maybe_wrapper
+
+
+class MetaParser(type):
+    def __new__(cls, name, bases, dct):
+        # Collect rules from members
+        new_members = {}
+        rules = {}
+        new_members['rules'] = rules
+        rule_classes = {}
+        new_members['rule_classes'] = rule_classes
+        for name, member in dct.items():
+            m = match_rule_re.fullmatch(name)
+            if m:
+                rule_name = m.group(1)
+                if inspect.isclass(member) and issubclass(member, Rule):
+                    rule_classes[rule_name] = member
+                else:
+                    rules[rule_name] = member
+
+        # Create half finished rules from Rule classes
+        rule_instances = {}
+        new_members['rule_instances'] = rule_instances
+        for rule_name, rule_class in rule_classes.items():
+            rule = rule_class(rule_name)
+            rule_instances[rule_name] = rule
+            rules[rule_name] = rule
+            new_members['m_' + rule_name] = lambda parser_inst: rule.match(parser_inst)
+
+        # Generate *_maybe rules
+        maybe_rules = {}
+        for rule_name, rule in rules.items():
+            rule_maybe_name = rule_name + '_maybe'
+            rule_maybe = get_rule_maybe_wrapper(rule_maybe_name, rule)
+            maybe_rules[rule_maybe_name] = rule_maybe
+            new_members['m_' + rule_maybe_name] = rule_maybe
+        rules.update(maybe_rules)
+
+        # Finish initializing the rules created from classes
+        for rule_instance in rule_instances.values():
+            rule_instance.init(rules)
+
+        dct.update(new_members)
+        return super().__new__(cls, name, bases, dct)
+
+
+class Parser(metaclass=MetaParser):
     """\
     Base class for matching rules to a series of elements. These rules must be
     methods of the subclass that begin with "m_". Starting with "start" method,
@@ -169,39 +309,13 @@ class Parser:
     def handle_accepted_ignored_elements(self, ignored_elements):
         pass
 
-    def rule_wrapper(self, func, name, maybe, *args, **kwargs):
-        if self.debug_this_parser:
-            print('| ' * self.stream.stack_size() + name, args, kwargs, self.stream.loc())
-        self.stream.push()
-        try:
-            rv = func(*args, **kwargs) if maybe else func(self, *args, **kwargs)
-            it, loc, error, error_loc, ignored_elements = self.stream.accept()
-            self.handle_accepted_ignored_elements(ignored_elements)
-            if self.debug_this_parser:
-                print('| ' * self.stream.stack_size() + 'ACCEPT', loc)
-            return rv
-        except ParseError as e:
-            self.stream.reject(e)
-            if self.debug_this_parser:
-                print('| ' * self.stream.stack_size() + 'REJECT:',
-                    e, self.stream.furthest_error_locs[-1])
-            if maybe:
-                return None
-            raise
-
-    def __getattr__(self, name):
-        maybe = name.endswith('_maybe')
-        if maybe:
-            name = name[:-6]
-        obj = object.__getattribute__(self, name)
-        if maybe:
-            return lambda *args, **kwargs: self.rule_wrapper(obj, name, True, *args, **kwargs)
-        return obj
+    def rule_wrapper(self, func, name, maybe, *args, pass_self=True, **kwargs):
+        with RuleContext(self, maybe, lambda: '{} {} {}'.format(name, args, kwargs)):
+            return func(self, *args, **kwargs) if pass_self else func(*args, **kwargs)
 
     def match_single_rule(self, rule, args):
         try:
-            value = getattr(self, 'm_' + rule)(*args)
-            return True, value
+            return True, self.rules[rule](self, *args)
         except ParseError:
             return False, None
 
@@ -216,3 +330,6 @@ class Parser:
             if matched:
                 return value
         raise ParseError(loc, 'Expected ' + ' or '.join([str(r) for r in rules]))
+
+    def match_maybe(self, rules):
+        return self.rule_wrapper(self.match, 'match_maybe', True, rules, pass_self=False)

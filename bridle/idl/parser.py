@@ -11,7 +11,7 @@ from ..errors import (
 )
 from .. import tree
 from ..const_expr import ConstValue, Op, ConstExpr
-from ..parser import Parser, nontrivial_rule
+from ..parser import Parser, nontrivial_rule, Rule
 from .tokenizer import IdlTokenizer, Token, TokenKind, dump_tokens, \
     set_location_from_line_statement
 from ..log import print_location_error
@@ -95,6 +95,31 @@ class Declarator:
     def get_type(self, base_type):
         return base_type if self.array_dims is None \
             else tree.ArrayNode(base_type, self.array_dims)
+
+
+class LeadingTokenRule(Rule):
+    def __init__(self, name, trivial, help_string, token_hints):
+        super().__init__(name, trivial)
+        self.help_string = help_string
+        self.token_hints = token_hints
+
+    def init_impl(self, all_rules):
+        pass
+
+    def get_child_token_hints(self):
+        return {token_kind: (hint, self.get_node) for token_kind, hint in self.token_hints.items()}
+
+    def get_node(self, parser_inst, token, what):
+        raise NotImplementedError
+
+    def match_impl(self, parser_inst):
+        parser_inst.m_ws_before()
+        hint, token = parser_inst.pick_by_token_kind(self.token_hints)
+        if hint is None:
+            raise ExpectedError(Location(parser_inst.stream.loc()), self.help_string, repr(token))
+        rv = self.get_node(parser_inst, token, hint)
+        parser_inst.m_ws_after()
+        return rv
 
 
 class IdlParser(Parser, Configurable):
@@ -222,6 +247,14 @@ class IdlParser(Parser, Configurable):
             else:
                 return repeating_results, self.match(terminating_rules)
 
+    def pick_by_token_kind(self, token_kinds):
+        self.assert_not_end(lambda: [repr(tk) for tk in token_kinds.keys()])
+        token = self.stream.peek()[0]
+        what = token_kinds.get(token.kind, None)
+        if what is not None:
+            self.stream.advance()
+        return (what, token)
+
     def get_preprocessor_statement(self):
         line = ''
         for c in self.stream:
@@ -296,43 +329,8 @@ class IdlParser(Parser, Configurable):
         return rv
 
     @nontrivial_rule
-    def m_boolean_literal(self):
-        return ConstValue(self.m_token(TokenKind.boolean).value,
-            tree.PrimitiveKind.boolean)
-
-    @nontrivial_rule
     def m_identifier(self):
         return self.m_token(TokenKind.identifier).text
-
-    @nontrivial_rule
-    def m_floating_pt_literal(self):
-        return ConstValue(self.m_token(TokenKind.floating_point).value,
-            tree.PrimitiveKind.f128)
-
-    @nontrivial_rule
-    def m_integer_literal(self):
-        return ConstValue(self.m_token(TokenKind.integer).value,
-            tree.PrimitiveKind.u128)
-
-    @nontrivial_rule
-    def m_character_literal(self):
-        return ConstValue(self.m_token(TokenKind.char).value,
-            tree.PrimitiveKind.c8)
-
-    @nontrivial_rule
-    def m_wide_character_literal(self):
-        return ConstValue(self.m_token(TokenKind.wchar).value,
-            tree.PrimitiveKind.c16)
-
-    @nontrivial_rule
-    def m_string_literal(self):
-        return ConstValue(self.m_token(TokenKind.string).value,
-            tree.PrimitiveKind.s8)
-
-    @nontrivial_rule
-    def m_wide_string_literal(self):
-        return ConstValue(self.m_token(TokenKind.wstring).value,
-            tree.PrimitiveKind.s16)
 
     def m_begin_scope(self):
         return self.m_token(TokenKind.lbrace)
@@ -389,13 +387,15 @@ class IdlParser(Parser, Configurable):
         self.m_token(TokenKind.semicolon)
         return rv
 
-    @nontrivial_rule
-    def m_module_dcl(self):
-        self.m_token(TokenKind.MODULE)
-        module = tree.ModuleNode(self.m_identifier())
-        self.add_children_in_scope(module, ('definition',),
-            at_least_one=not self.config['allow_empty_modules'])
-        return module
+    class Rule_module_dcl(LeadingTokenRule):
+        def __init__(self, name):
+            super().__init__(name, False, 'module', {TokenKind.MODULE: (None,)})
+
+        def get_node(self, parser_inst, token, what):
+            module = tree.ModuleNode(parser_inst.m_identifier())
+            parser_inst.add_children_in_scope(module, ('definition',),
+                at_least_one=not parser_inst.config['allow_empty_modules'])
+            return module
 
     @nontrivial_rule
     def m_scoped_name(self):
@@ -432,18 +432,21 @@ class IdlParser(Parser, Configurable):
             'scoped_name',
         ))
 
-    @nontrivial_rule
-    def m_literal(self):
-        return self.match((
-            'integer_literal',
-            'floating_pt_literal',
-            # TODO: 'fixed_pt_literal',
-            'character_literal',
-            'wide_character_literal',
-            'boolean_literal',
-            'string_literal',
-            'wide_string_literal',
-        ))
+    class Rule_literal(LeadingTokenRule):
+        def __init__(self, name):
+            super().__init__(name, True, 'literal value', {
+                TokenKind.boolean: tree.PrimitiveKind.boolean, # boolean_literal
+                TokenKind.floating_point: tree.PrimitiveKind.f128, # floating_pt_literal
+                # TODO: fixed_pt_literal
+                TokenKind.integer: tree.PrimitiveKind.u128, # integer_literal
+                TokenKind.char: tree.PrimitiveKind.c8, # character_literal
+                TokenKind.wchar: tree.PrimitiveKind.c16, # wide_character_literal
+                TokenKind.string: tree.PrimitiveKind.s8, # string_literal
+                TokenKind.wstring: tree.PrimitiveKind.s16, # wide_string_literal
+            })
+
+        def get_node(self, parser_inst, token, what):
+            return ConstValue(token.value, what)
 
     def m_const_expr(self):
         return self.m_or_expr()
