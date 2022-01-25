@@ -110,37 +110,37 @@ class Stream:
         return self.ignored_elements[-1]
 
 
-def rule_name(rule_method):
-    return rule_method.__name__[2:]
-
-
-def nontrivial_rule(rule_method):
-    """\
-    Decorator for rule methods in Parser subclasses that sets up the rule as a
-    place to check if a series of nested rules has failed.
-    """
-    @wraps(rule_method)
-    def rule_wrapper_wrapper(self, *args, **kwargs):
-        return self.rule_wrapper(
-            rule_method, rule_name(rule_method), False, *args, **kwargs)
-    return rule_wrapper_wrapper
-
-
 class RuleContext:
-    def __init__(self, parser, maybe=False, get_debug_info=None):
+    def __init__(self, parser, debug_info=None, trivial=None, maybe=False):
+        if trivial is None:
+            trivial = True
+        if trivial:
+            if maybe:
+                raise ValueError('Maybe requires non-trivial')
+        elif debug_info is None:
+            raise ValueError('Non-trivial requires debug_info')
         self.parser = parser
+        self.debug_info = debug_info
+        self.trivial = trivial
         self.maybe = maybe
-        self.get_debug_info = (lambda: '') if get_debug_info is None else get_debug_info
 
     def indent(self):
         return '| ' * self.parser.stream.stack_size()
 
     def __enter__(self):
+        if self.trivial:
+            return
         if self.parser.debug_this_parser:
-            print(self.indent() + self.get_debug_info(), self.parser.stream.loc())
+            if callable(self.debug_info):
+                debug_info = self.debug_info()
+            else:
+                debug_info = self.debug_info
+            print(self.indent() + debug_info, self.parser.stream.loc())
         self.parser.stream.push()
 
     def __exit__(self, exc_type, exc_value, traceback):
+        if self.trivial:
+            return
         if exc_type is None:
             it, loc, error, error_loc, ignored_elements = self.parser.stream.accept()
             self.parser.handle_accepted_ignored_elements(ignored_elements)
@@ -152,14 +152,47 @@ class RuleContext:
                 print(self.indent() + 'REJECT:',
                     exc_value, self.parser.stream.furthest_error_locs[-1])
             if self.maybe:
-                return True
-        else:
-            assert False
+                return True  # Suppress exception
+
+
+def wrap_rule(rule, name, default_maybe=False):
+    if isinstance(rule, Rule):
+        @wraps(rule)
+        def rule_wrapper(*args, maybe=default_maybe, **kwargs):
+            return rule(*args, maybe=maybe, **kwargs)
+        return rule_wrapper
+
+    else:
+        @wraps(rule)
+        def rule_wrapper(*args, maybe=default_maybe, **kwargs):
+            if inspect.ismethod(rule):
+                parser = rule.__self__
+            else:
+                parser = args[0]
+            with RuleContext(parser, trivial=False, maybe=maybe,
+                    debug_info=lambda: '{} {} {}'.format(name, args, kwargs)):
+                return rule(*args, **kwargs)
+        return rule_wrapper
+
+
+def rule_name(rule_method):
+    return rule_method.__name__[2:]
+
+
+def nontrivial_rule(rule):
+    """\
+    Decorator for rule methods in Parser subclasses that sets up the rule as a
+    place to check if a series of nested rules has failed.
+    """
+    return wrap_rule(rule, rule_name(rule))
 
 
 class Rule:
-    def __init__(self, name, trivial):
+    def __init__(self, parser_inst, name, trivial=None):
+        self.parser_inst = parser_inst
         self.name = name
+        if trivial is None:
+            raise ValueError('trivial must be specified!')
         self.trivial = trivial
         self.initialized = False
         self.initializing = False
@@ -167,104 +200,57 @@ class Rule:
         self.child_rule_methods = None
         self.child_rule_insts = None
 
-    def init_child_rules(self, all_rules, child_names):
+    def init_child_rules(self, child_names):
         self.child_rules = {}
         self.child_rule_methods = {}
         self.child_rule_insts = {}
         for child_name in child_names:
-            child = all_rules[child_name]
+            child = self.parser_inst.all_rules[child_name]
             self.child_rules[child_name] = child
             if isinstance(child, Rule):
-                child.init(all_rules)
+                child.init()
                 self.child_rule_insts[child_name] = child
             else:
                 self.child_rule_methods[child_name] = child
 
-    def init_impl(self, all_rules):
+    def init_impl(self):
         """\
         Use this to collect information about other rules.
         """
         raise NotImplementedError
 
-    def init(self, all_rules):
+    def init(self):
         if self.initialized:
             return
         if self.initializing:
             raise RuntimeError("Cycle in rule " + self.name)
-        initializing = True
-        self.init_impl(all_rules)
-        initializing = False
+        self.initializing = True
+        self.init_impl()
+        self.initializing = False
         self.initialized = True
 
-    def match_impl(self, parser_inst):
+    def match(self, *args, **kwargs):
         raise NotImplementedError
 
-    def match(self, parser_inst):
-        if self.trivial:
-            return self.match_impl(parser_inst)
-        else:
-            with RuleContext(parser_inst, False, lambda: self.name):
-                return self.match_impl(parser_inst)
-        assert False
+    def get_debug_info(self, *args, **kwargs):
+        return '{} {} {}'.format(self.name, args, kwargs)
 
-    def __call__(self, parser_inst):
-        return self.match(parser_inst)
+    def __call__(self, *args, maybe=False, **kwargs):
+        with RuleContext(self.parser_inst, self.get_debug_info, trivial=self.trivial, maybe=maybe):
+            return self.match(*args, **kwargs)
+        assert False, "match should've returned a result or thrown an exception"
 
 
-match_rule_re = re.compile(r'(?:m|Rule)_(\w+)')
+class_based_rule_name_re = re.compile(r'Rule_(\w+)')
+method_based_rule_name_re = re.compile(r'm_(\w+)')
 
 
-def get_rule_maybe_wrapper(name, rule):
-    @wraps(rule)
-    def rule_maybe_wrapper(self, *args, **kwargs):
-        return self.rule_wrapper(rule, name, True, *args, **kwargs)
-    return rule_maybe_wrapper
+def create_method(obj, function):
+    method = function.__get__(obj, obj.__class__)
+    return method
 
 
-class MetaParser(type):
-    def __new__(cls, name, bases, dct):
-        # Collect rules from members
-        new_members = {}
-        rules = {}
-        new_members['rules'] = rules
-        rule_classes = {}
-        new_members['rule_classes'] = rule_classes
-        for name, member in dct.items():
-            m = match_rule_re.fullmatch(name)
-            if m:
-                rule_name = m.group(1)
-                if inspect.isclass(member) and issubclass(member, Rule):
-                    rule_classes[rule_name] = member
-                else:
-                    rules[rule_name] = member
-
-        # Create half finished rules from Rule classes
-        rule_instances = {}
-        new_members['rule_instances'] = rule_instances
-        for rule_name, rule_class in rule_classes.items():
-            rule = rule_class(rule_name)
-            rule_instances[rule_name] = rule
-            rules[rule_name] = rule
-            new_members['m_' + rule_name] = lambda parser_inst: rule.match(parser_inst)
-
-        # Generate *_maybe rules
-        maybe_rules = {}
-        for rule_name, rule in rules.items():
-            rule_maybe_name = rule_name + '_maybe'
-            rule_maybe = get_rule_maybe_wrapper(rule_maybe_name, rule)
-            maybe_rules[rule_maybe_name] = rule_maybe
-            new_members['m_' + rule_maybe_name] = rule_maybe
-        rules.update(maybe_rules)
-
-        # Finish initializing the rules created from classes
-        for rule_instance in rule_instances.values():
-            rule_instance.init(rules)
-
-        dct.update(new_members)
-        return super().__new__(cls, name, bases, dct)
-
-
-class Parser(metaclass=MetaParser):
+class Parser:
     """\
     Base class for matching rules to a series of elements. These rules must be
     methods of the subclass that begin with "m_". Starting with "start" method,
@@ -272,6 +258,39 @@ class Parser(metaclass=MetaParser):
     indicate that the rule is optional, or by listing multiple possible rules
     using match().
     """
+
+    def __init__(self):
+        # Collect all the rules defined as m_* methods or Rule subclasses
+        self.all_rules = {}
+        self.class_based_rules = {}
+        self.method_based_rules = {}
+        for member_name, member in self.__class__.__dict__.items():
+            if inspect.isclass(member) and issubclass(member, Rule):
+                m = class_based_rule_name_re.fullmatch(member_name)
+                if m:
+                    rule_name = m.group(1)
+                    inst = member(self, rule_name)
+                    self.class_based_rules[rule_name] = inst
+                    self.all_rules[rule_name] = inst
+                    setattr(self, 'm_' + rule_name, inst)
+            elif callable(member):
+                m = method_based_rule_name_re.fullmatch(member_name)
+                if m:
+                    rule_name = m.group(1)
+                    # rules have to be bound methods, and these are unbound
+                    # functions, so we have to bind them.
+                    method = create_method(self, member)
+                    self.method_based_rules[rule_name] = method
+                    self.all_rules[rule_name] = method
+
+        # Generate *_maybe rules
+        for rule_name, rule in self.all_rules.items():
+            new_name = rule_name + '_maybe'
+            setattr(self, 'm_' + new_name, wrap_rule(rule, new_name, default_maybe=True))
+
+        # Finish initializing the rules created from classes
+        for rule_instance in self.class_based_rules.values():
+            rule_instance.init()
 
     def _parse(self, source, name, source_key, over_chars, debug=False, parse_error_handler=None):
         self.stream = Stream(source, name, source_key, over_chars)
@@ -309,13 +328,9 @@ class Parser(metaclass=MetaParser):
     def handle_accepted_ignored_elements(self, ignored_elements):
         pass
 
-    def rule_wrapper(self, func, name, maybe, *args, pass_self=True, **kwargs):
-        with RuleContext(self, maybe, lambda: '{} {} {}'.format(name, args, kwargs)):
-            return func(self, *args, **kwargs) if pass_self else func(*args, **kwargs)
-
     def match_single_rule(self, rule, args):
         try:
-            return True, self.rules[rule](self, *args)
+            return True, self.all_rules[rule](*args)
         except ParseError:
             return False, None
 
@@ -332,4 +347,6 @@ class Parser(metaclass=MetaParser):
         raise ParseError(loc, 'Expected ' + ' or '.join([str(r) for r in rules]))
 
     def match_maybe(self, rules):
-        return self.rule_wrapper(self.match, 'match_maybe', True, rules, pass_self=False)
+        with RuleContext(self, trivial=False, maybe=True,
+                debug_info=lambda: 'match_maybe ({})'.format(repr(rules))):
+            return self.match(rules)

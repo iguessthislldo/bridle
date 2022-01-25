@@ -358,6 +358,7 @@ class IdlTokenizer(Parser, Configurable):
         ))
 
     def __init__(self, **config):
+        Parser.__init__(self)
         Configurable.__init__(self, config)
 
     def peek_chars_matching(self, match_func, perchar=False, include_last=False):
