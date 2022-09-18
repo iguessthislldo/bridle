@@ -622,7 +622,7 @@ class ConstantNode(Node, ConstAbc):
 
     def _repr(self, short):
         return self.repr_template(
-            '{} = {}', repr(self.primitive_node), repr(self), short=short)
+            '{} = {}', repr(self.primitive_node), repr(self.value), short=short)
 
 
 class UnionBranchNode(FieldNode):
