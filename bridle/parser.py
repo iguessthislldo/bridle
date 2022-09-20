@@ -16,8 +16,8 @@ class Stream:
     """\
     Stream is a wrapper for the stack of iterators and other objects that
     represent where we are in the series of elements to be processed. It also
-    helps decide what failed parsing attempt was likly cause of a failure by
-    keeping track of the furthest error.
+    helps decide what failed parsing attempt was the likely cause of a failure
+    by keeping track of the furthest error.
     """
 
     def __init__(self, source, name, source_key, over_strings):
@@ -66,7 +66,7 @@ class Stream:
         self.locs.append(Location(self.loc()))
         self.furthest_errors.append(self.furthest_errors[-1])
         self.furthest_error_locs.append(Location(self.furthest_error_locs[-1]))
-        self.ignored_elements .append([])
+        self.ignored_elements.append([])
 
     def pop(self):
         return (
@@ -292,12 +292,13 @@ class Parser:
         for rule_instance in self.class_based_rules.values():
             rule_instance.init()
 
-    def _parse(self, source, name, source_key, over_chars, debug=False, parse_error_handler=None):
+    def _parse(self, source, name, source_key, over_chars,
+            start=None, debug=False, parse_error_handler=None):
         self.stream = Stream(source, name, source_key, over_chars)
         self.debug_this_parser = debug
         furthest_error = None
         try:
-            rv = self.start()
+            rv = self.start() if start is None else start()
         except ParseError as e:
             furthest_error = self.stream.furthest_error(e)
             if furthest_error is None:

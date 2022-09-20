@@ -32,6 +32,9 @@ class ScopedName:
             return cls(m.group(2).split('::'), m.group(1) is not None)
         raise InternalError('Invalid scoped IDL name: {}', repr(idl))
 
+    def name(self):
+        return self.parts[-1] if len(self.parts) else None
+
     def __repr__(self):
         name = '::'.join(self.parts)
         if self.absolute:
@@ -185,6 +188,9 @@ class PrimitiveKind(enum.Enum):
                     + ' is outside valid range for {n}.').format(
                         v=repr(value), nv=number_value, n=self.name))
 
+    def __repr__(self):
+        return '<PrimitiveKind.{}>'.format(self.name)
+
 
 class Action(enum.Enum):
     add = enum.auto()
@@ -218,8 +224,7 @@ class Node:
 
     @scoped_name.setter
     def scoped_name(self, new):
-        if new.parts:
-            self._name = new.parts[-1]
+        self._name = new.name()
         self._scoped_name = new
 
     # Only Usable in Syntactic Phase ------------------------------------------
@@ -523,6 +528,17 @@ class StructNode(ContainerNode, ForwardDclNode):
 
     def accept(self, visitor):
         visitor.visit_struct(self)
+
+
+class UnknownAnnotationNode(Node):
+
+    def __init__(self, scoped_name, params):
+        super().__init__(scoped_name.name())
+        self.scoped_name = scoped_name
+        self.params = params
+
+    def accept(self, visitor):
+        raise NotImplementedError
 
 
 class EnumeratorNode(Node):

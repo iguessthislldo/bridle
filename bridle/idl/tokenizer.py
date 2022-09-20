@@ -187,7 +187,13 @@ class FloatingPoint(AbstractToken):
         return True
 
 
+class PreparsedNode(AbstractToken):
+    pass
+
+
 class TokenKind(enum.Enum):
+    preparsed_annotation = PreparsedNode()
+
     # Not IDL
     preprocessor_statement = PreprocessorStatement()
     newline = Newline()

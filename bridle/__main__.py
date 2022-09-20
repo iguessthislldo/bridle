@@ -8,6 +8,7 @@ from .type_files import add_type_file_argument_parsing, type_files_to_trees
 
 def main():
     argparser = ArgumentParser(description='OMG IDL Analysis Tool')
+    argparser.add_argument('--profile', action='store_true', help='Profile the run')
     subcmds = argparser.add_subparsers(dest='subcommand', required=True)
 
     subcmd = subcmds.add_parser('dry-run', help='Just parse type files')
@@ -19,6 +20,9 @@ def main():
     add_lang_server_subcmd(subcmds)
 
     args = argparser.parse_args()
+    if args.profile:
+        import functiontrace
+        functiontrace.trace()
     args.subcmd(args)
 
 

@@ -3,7 +3,7 @@ from io import StringIO
 
 from pcpp import Preprocessor
 
-from ..utils import Location, is_sequence, Configurable
+from ..utils import Location, is_sequence, must_be_sequence, Configurable
 from ..errors import (
     ErrorsReported,
     ExpectedError,
@@ -14,7 +14,7 @@ from ..const_expr import ConstValue, Op, ConstExpr
 from ..parser import Parser, nontrivial_rule, Rule
 from .tokenizer import IdlTokenizer, Token, TokenKind, dump_tokens, \
     set_location_from_line_statement
-from ..log import print_location_error
+from ..log import log_loc_error, log_warning
 
 
 class IdlFile:
@@ -97,30 +97,139 @@ class Declarator:
             else tree.ArrayNode(base_type, self.array_dims)
 
 
+class LeadingTokensData:
+    # Simplified structure example:
+    # {
+    #   TokenKind.DOUBLE: {None: (f64, FloatingPoint.get_node)},
+    #   TokenKind.SHORT: {None: (i16, Integer.get_node)},
+    #   TokenKind.LONG: {
+    #       None: (i32, Integer.get_node),
+    #       TokenKind.DOUBLE: {None: f128, FloatingPoint.get_node},
+    #   },
+    # }
+
+    def __init__(self, data):
+        self.data = data
+
+    @classmethod
+    def from_input(cls, input_data, get_node):
+        if not isinstance(input_data, dict):
+            input_data = {tk: None for tk in must_be_sequence(input_data)}
+        data = {}
+        for token_kinds, hint in input_data.items():
+            put = data
+            for token_kind in must_be_sequence(token_kinds):
+                if token_kind not in put:
+                    put[token_kind] = {}
+                put = put[token_kind]
+            put[None] = (hint, get_node)
+        return cls(data)
+
+    def _copy(self, this_dict, other_dict):
+        for token_kind, what in other_dict.items():
+            if token_kind is None:
+                if token_kind in this_dict:
+                    raise RuntimeError('Leading token rule conflict')
+                this_dict[token_kind] = what
+            else:
+                if token_kind not in this_dict:
+                    this_dict[token_kind] = {}
+                self._copy(this_dict[token_kind], what)
+
+    def copy_from(self, other):
+        self._copy(self.data, other.data)
+
+    def match_i(self, parser, help_string):
+        parser.m_ws_before()
+        parser.assert_not_end(help_string)
+        got_tokens = []
+        leading_tokens = self.data
+        while True:
+            parser.m_ws_before()
+            tokens = parser.stream.peek()
+            if tokens:
+                token = tokens[0]
+                if token.kind in leading_tokens:
+                    got_tokens.append(token)
+                    leading_tokens = leading_tokens[token.kind]
+                    parser.stream.advance()
+                else:
+                    break
+            else:
+                break
+        if None not in leading_tokens:
+            return True, [token], None, None
+        hint, get_node = leading_tokens[None]
+        return False, got_tokens, hint, get_node
+
+    def match(self, parser, help_string, failed_cb=None):
+        failed, tokens, hint, get_node = self.match_i(parser, help_string)
+        if failed:
+            if failed_cb is not None:
+                rv = failed_cb(tokens[0])
+                if rv is not None:
+                    return rv
+            raise ExpectedError(Location(parser.stream.loc()), help_string, repr(tokens[0]))
+        rv = get_node(tokens, hint)
+        parser.m_ws_after()
+        return rv
+
+
 class LeadingTokenRule(Rule):
-    def __init__(self, parser_inst, name, help_string, token_hints, trivial=None):
+    '''\
+    Rule that exposes the leading expected token or tokens to the parser so it
+    can optimize matching rules to the current token from the stream.
+    '''
+
+    def __init__(self, parser_inst, name, help_string, leading_tokens, trivial=None):
         super().__init__(parser_inst, name, trivial=trivial)
         self.help_string = help_string
-        self.token_hints = token_hints
+        self.leading_tokens_data = LeadingTokensData.from_input(leading_tokens, self.get_node)
 
     def init_impl(self):
         pass
 
-    def get_child_token_hints(self):
-        return {token_kind: (hint, self.get_node) for token_kind, hint in self.token_hints.items()}
-
-    def get_node(self, token, what):
+    def get_node(self, leading_tokens, hint):
         raise NotImplementedError
 
     def match(self):
-        self.parser_inst.m_ws_before()
-        hint, token = self.parser_inst.pick_by_token_kind(self.token_hints)
-        if hint is None:
-            raise ExpectedError(
-                Location(self.parser_inst.stream.loc()), self.help_string, repr(token))
-        rv = self.get_node(token, hint)
-        self.parser_inst.m_ws_after()
-        return rv
+        return self.leading_tokens_data.match(self.parser_inst, self.help_string)
+
+
+class LeadingTokenMultiRule(Rule):
+    '''\
+    This takes a number of possible rules that differ in what the leading
+    token is and pick what should be the correct rule based on that token.
+    '''
+
+    def __init__(self, parser_inst, name, help_string, child_rule_names, trivial=None):
+        super().__init__(parser_inst, name, trivial=trivial)
+        self.help_string = help_string
+        self.child_rule_names = child_rule_names
+        self.leading_tokens_data = None
+
+    def init_impl(self):
+        self.init_child_rules(self.child_rule_names)
+        self.leading_tokens_data = LeadingTokensData({})
+        for child_rule_name, child_rule_inst in self.child_rule_insts.items():
+            child_rule_inst.init()
+            self.leading_tokens_data.copy_from(child_rule_inst.leading_tokens_data)
+            if child_rule_inst.child_rule_methods is not None:
+                for rule_name, method in child_rule_inst.child_rule_methods.items():
+                    if rule_name not in self.child_rule_methods:
+                        self.child_rule_methods[rule_name] = method
+
+    def get_node(self, node):
+        return node
+
+    # TODO: Remove this and child_rule_methods?
+    def method_rule_fallback(self, failed_token):
+        # Fallback to method rules if there are any
+        return self.parser_inst.match_maybe(self.child_rule_methods.keys())
+
+    def match(self):
+        return self.get_node(self.leading_tokens_data.match(
+            self.parser_inst, self.help_string, failed_cb=self.method_rule_fallback))
 
 
 class IdlParser(Parser, Configurable):
@@ -128,7 +237,7 @@ class IdlParser(Parser, Configurable):
     def define_config_options(cls, options):
         options.add_options(dict(
             includes=[], defines=[],
-            warn_about_unsupported_annotations=True,
+            warn_about_unsupported_annotations='once',
             debug_all=False,
             dump_pp_output=False,
             dump_tokens=False,
@@ -152,6 +261,7 @@ class IdlParser(Parser, Configurable):
         ]])
         self.tokenizer = IdlTokenizer(config_parent=('tokenizer_', self))
         self.source_lines = SourceLines()
+        self.warned_annotations = set()
 
     def parse_idl(self, idl_file):
         if self.config['raise_parse_errors']:
@@ -159,7 +269,7 @@ class IdlParser(Parser, Configurable):
         else:
             def location_error_handler(self, error):
                 line = self.source_lines.get_line(error.location.source_key, error.location.line)
-                print_location_error(error, line)
+                log_loc_error(error, line)
                 raise ErrorsReported('Syntax error occurred')
 
         # Preprocessor Phase
@@ -181,10 +291,18 @@ class IdlParser(Parser, Configurable):
         if self.config['dump_tokens']:
             dump_tokens(tokens)
 
+        # Pre-parse annotations
+        self.in_annotation = False
+        processed_tokens = self._parse(
+            tokens, name, idl_file.source_key, over_chars=False,
+            parse_error_handler=location_error_handler,
+            start=self.start_preparse,
+        )
+
         # Parse the Tokens into a Tree
         self.in_annotation = False
         root = self._parse(
-            tokens, name, idl_file.source_key, over_chars=False,
+            processed_tokens, name, idl_file.source_key, over_chars=False,
             debug=self.config['debug_parser'],
             parse_error_handler=location_error_handler,
         )
@@ -249,14 +367,6 @@ class IdlParser(Parser, Configurable):
             else:
                 return repeating_results, self.match(terminating_rules)
 
-    def pick_by_token_kind(self, token_kinds):
-        self.assert_not_end(lambda: [repr(tk) for tk in token_kinds.keys()])
-        token = self.stream.peek()[0]
-        what = token_kinds.get(token.kind, None)
-        if what is not None:
-            self.stream.advance()
-        return (what, token)
-
     def get_preprocessor_statement(self):
         line = ''
         for c in self.stream:
@@ -273,8 +383,9 @@ class IdlParser(Parser, Configurable):
             elif t.kind is TokenKind.preprocessor_statement:
                 self.stream.advance()
                 set_location_from_line_statement(self.stream.loc(), t.text)
-            elif t.kind is TokenKind.at and annotations and not self.in_annotation:
-                self.stream.push_ignored_element(self.m_annotation_appl())
+            elif t.kind is TokenKind.preparsed_annotation:
+                self.stream.push_ignored_element(t.value)
+                self.stream.advance()
             else:
                 break
 
@@ -346,8 +457,7 @@ class IdlParser(Parser, Configurable):
     def m_end_scope(self):
         return self.m_token(self.end_scope)
 
-    def dcl_header_check_forward(self, token_kind):
-        self.m_token(token_kind)
+    def dcl_header_check_forward(self):
         name = self.m_identifier()
         self.assert_not_end(lambda: [str(TokenKind.semicolon)])
         next_token = self.stream.peek()[0]
@@ -361,6 +471,19 @@ class IdlParser(Parser, Configurable):
                 parent.add_children(c)
             else:
                 parent.add_child(c)
+
+    def start_preparse(self):
+        results = []
+        while not self.stream.done():
+            t = self.stream.peek()[0]
+            if t.kind is TokenKind.at:
+                result = Token(t.loc, 'TODO',
+                    TokenKind.preparsed_annotation, value=self.m_annotation_appl())
+            else:
+                result = t
+                self.stream.advance()
+            results.append(result)
+        return results
 
     # =========================================================================
     # The methods below should follow the names and order of the grammar rules
@@ -377,24 +500,25 @@ class IdlParser(Parser, Configurable):
 
     # Building Block Core Data Types ==========================================
 
-    @nontrivial_rule
-    def m_definition(self):
-        rv = self.match((
-            'module_dcl',
-            'const_dcl',
-            'type_dcl',
-            # TODO: 'except_dcl'  # Building Block Interfaces - Basic
-            'interface_dcl'  # Building Block Interfaces - Basic
-        ))
-        self.m_token(TokenKind.semicolon)
-        return rv
+    class Rule_definition(LeadingTokenMultiRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'module, constant, type, or interface', [
+                'module_dcl',
+                'const_dcl',
+                'type_dcl',
+                # TODO: 'except_dcl'  # Building Block Interfaces - Basic
+                'interface_dcl',  # Building Block Interfaces - Basic
+            ], trivial=False)
+
+        def get_node(self, node):
+            self.parser_inst.m_token(TokenKind.semicolon)
+            return node
 
     class Rule_module_dcl(LeadingTokenRule):
         def __init__(self, parser_inst, name):
-            super().__init__(parser_inst, name, 'module',
-                {TokenKind.MODULE: (None,)}, trivial=False)
+            super().__init__(parser_inst, name, 'module', TokenKind.MODULE, trivial=False)
 
-        def get_node(self, token, what):
+        def get_node(self, leading_tokens, hint):
             module = tree.ModuleNode(self.parser_inst.m_identifier())
             self.parser_inst.add_children_in_scope(module, ('definition',),
                 at_least_one=not self.parser_inst.config['allow_empty_modules'])
@@ -409,14 +533,17 @@ class IdlParser(Parser, Configurable):
             parts.append(self.m_identifier())
         return tree.ScopedName(parts, absolute)
 
-    @nontrivial_rule
-    def m_const_dcl(self):
-        self.m_token(TokenKind.CONST)
-        constant = tree.ConstantNode(self.m_const_type())
-        constant.name = self.m_identifier()
-        self.m_token(TokenKind.equals)
-        constant.value = self.m_const_expr()
-        return constant
+    class Rule_const_dcl(LeadingTokenRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(
+                parser_inst, name, 'constant declaration', TokenKind.CONST, trivial=False)
+
+        def get_node(self, leading_tokens, hint):
+            constant = tree.ConstantNode(self.parser_inst.m_const_type())
+            constant.name = self.parser_inst.m_identifier()
+            self.parser_inst.m_token(TokenKind.equals)
+            constant.value = self.parser_inst.m_const_expr()
+            return constant
 
     @nontrivial_rule
     def m_const_type(self):
@@ -448,8 +575,8 @@ class IdlParser(Parser, Configurable):
                 TokenKind.wstring: tree.PrimitiveKind.s16,  # wide_string_literal
             }, trivial=True)
 
-        def get_node(self, token, what):
-            return ConstValue(token.value, what)
+        def get_node(self, leading_tokens, hint):
+            return ConstValue(leading_tokens[0].value, hint)
 
     def m_const_expr(self):
         return self.m_or_expr()
@@ -536,13 +663,13 @@ class IdlParser(Parser, Configurable):
     def m_positive_int_const(self):
         return self.m_const_expr()
 
-    @nontrivial_rule
-    def m_type_dcl(self):
-        return self.match((
-            'constr_type_dcl',
-            # TODO: 'native_dcl',
-            'typedef_dcl',
-        ))
+    class Rule_type_dcl(LeadingTokenMultiRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'type declaration', [
+                'constr_type_dcl',
+                # TODO: 'native_dcl',
+                'typedef_dcl',
+            ], trivial=False)
 
     @nontrivial_rule
     def m_type_spec(self):
@@ -551,66 +678,80 @@ class IdlParser(Parser, Configurable):
             'template_type_spec',  # Building Block Anonymous Types
         ))
 
-    @nontrivial_rule
-    def m_simple_type_spec(self):
-        return self.match((
-            'base_type_spec',
-            'scoped_name',
-        ))
+    class Rule_simple_type_spec(LeadingTokenMultiRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'type name', [
+                'base_type_spec',
+                'scoped_name',
+            ], trivial=False)
 
-    @nontrivial_rule
-    def m_base_type_spec(self):
-        return self.match((
-            # floats and ints are flipped from the spec order because otherwise
-            # "long double" will match "long".
-            'floating_pt_type',
-            'integer_type',
-            'char_type',
-            'wide_char_type',
-            'boolean_type',
-            'octet_type',
-        ))
+    class Rule_base_type_spec(LeadingTokenMultiRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'scalar primitive type', [
+                # floats and ints are flipped from the spec order because otherwise
+                # "long double" will match "long".
+                'floating_pt_type',
+                'integer_type',
+                'char_type',
+                'wide_char_type',
+                'boolean_type',
+                'octet_type',
+            ], trivial=False)
 
-    def m_floating_pt_type(self):
-        return tree.PrimitiveNode(self.m_token_seqs({
-            TokenKind.FLOAT: tree.PrimitiveKind.f32,
-            TokenKind.DOUBLE: tree.PrimitiveKind.f64,
-            (TokenKind.LONG, TokenKind.DOUBLE): tree.PrimitiveKind.f128,
-        }))
+    class PrimitiveNodeRule(LeadingTokenRule):
+        def __init__(self, parser_inst, name, help_string, leading_tokens):
+            super().__init__(parser_inst, name,
+                help_string + ' type', leading_tokens, trivial=False)
 
-    def m_integer_type(self):
-        return tree.PrimitiveNode(self.m_token_seqs({
-            (TokenKind.UNSIGNED, TokenKind.LONG, TokenKind.LONG): tree.PrimitiveKind.u64,
-            TokenKind.UINT64: tree.PrimitiveKind.u64,
-            (TokenKind.LONG, TokenKind.LONG): tree.PrimitiveKind.i64,
-            TokenKind.INT64: tree.PrimitiveKind.i64,
-            (TokenKind.UNSIGNED, TokenKind.LONG): tree.PrimitiveKind.u32,
-            TokenKind.UINT32: tree.PrimitiveKind.u32,
-            TokenKind.LONG: tree.PrimitiveKind.i32,
-            TokenKind.INT32: tree.PrimitiveKind.i32,
-            (TokenKind.UNSIGNED, TokenKind.SHORT): tree.PrimitiveKind.u16,
-            TokenKind.UINT16: tree.PrimitiveKind.u16,
-            TokenKind.SHORT: tree.PrimitiveKind.i16,
-            TokenKind.INT16: tree.PrimitiveKind.i16,
-            TokenKind.UINT8: tree.PrimitiveKind.u8,
-            TokenKind.INT8: tree.PrimitiveKind.i8,
-        }))
+        def get_node(self, leading_tokens, hint):
+            return tree.PrimitiveNode(hint)
 
-    def m_char_type(self):
-        return tree.PrimitiveNode(self.m_token_seqs({
-            TokenKind.CHAR: tree.PrimitiveKind.c8}))
+    class Rule_floating_pt_type(PrimitiveNodeRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'floating point', {
+                TokenKind.FLOAT: tree.PrimitiveKind.f32,
+                TokenKind.DOUBLE: tree.PrimitiveKind.f64,
+                (TokenKind.LONG, TokenKind.DOUBLE): tree.PrimitiveKind.f128,
+            })
 
-    def m_wide_char_type(self):
-        return tree.PrimitiveNode(self.m_token_seqs({
-            TokenKind.WCHAR: tree.PrimitiveKind.c16}))
+    class Rule_integer_type(PrimitiveNodeRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'integer', {
+                (TokenKind.UNSIGNED, TokenKind.LONG, TokenKind.LONG): tree.PrimitiveKind.u64,
+                TokenKind.UINT64: tree.PrimitiveKind.u64,
+                (TokenKind.LONG, TokenKind.LONG): tree.PrimitiveKind.i64,
+                TokenKind.INT64: tree.PrimitiveKind.i64,
+                (TokenKind.UNSIGNED, TokenKind.LONG): tree.PrimitiveKind.u32,
+                TokenKind.UINT32: tree.PrimitiveKind.u32,
+                TokenKind.LONG: tree.PrimitiveKind.i32,
+                TokenKind.INT32: tree.PrimitiveKind.i32,
+                (TokenKind.UNSIGNED, TokenKind.SHORT): tree.PrimitiveKind.u16,
+                TokenKind.UINT16: tree.PrimitiveKind.u16,
+                TokenKind.SHORT: tree.PrimitiveKind.i16,
+                TokenKind.INT16: tree.PrimitiveKind.i16,
+                TokenKind.UINT8: tree.PrimitiveKind.u8,
+                TokenKind.INT8: tree.PrimitiveKind.i8,
+            })
 
-    def m_boolean_type(self):
-        return tree.PrimitiveNode(self.m_token_seqs({
-            TokenKind.BOOLEAN: tree.PrimitiveKind.boolean}))
+    class Rule_char_type(PrimitiveNodeRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name,
+                'character', {TokenKind.CHAR: tree.PrimitiveKind.c8})
 
-    def m_octet_type(self):
-        return tree.PrimitiveNode(self.m_token_seqs({
-            TokenKind.OCTET: tree.PrimitiveKind.byte}))
+    class Rule_wide_char_type(PrimitiveNodeRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name,
+                'wide character', {TokenKind.WCHAR: tree.PrimitiveKind.c16})
+
+    class Rule_boolean_type(PrimitiveNodeRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name,
+                'boolean', {TokenKind.BOOLEAN: tree.PrimitiveKind.boolean})
+
+    class Rule_octet_type(PrimitiveNodeRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name,
+                'octet', {TokenKind.OCTET: tree.PrimitiveKind.byte})
 
     @nontrivial_rule
     def m_template_type_spec(self):
@@ -651,24 +792,27 @@ class IdlParser(Parser, Configurable):
     def m_wide_string_type(self):
         return self._string_type(is_wide=True)
 
-    @nontrivial_rule
-    def m_constr_type_dcl(self):
-        return self.match((
-            'struct_dcl',
-            'union_dcl',
-            'enum_dcl',
-            # TODO 'bitset_decl',
-            'bitmask_dcl',
-        ))
+    class Rule_constr_type_dcl(LeadingTokenMultiRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'composite type declaration', [
+                'struct_dcl',
+                'union_dcl',
+                'enum_dcl',
+                # TODO 'bitset_decl',
+                'bitmask_dcl',
+            ], trivial=False)
 
-    @nontrivial_rule
-    def m_struct_dcl(self):
-        name, forward_dcl = self.dcl_header_check_forward(TokenKind.STRUCT)
-        struct = tree.StructNode(name, forward_dcl=forward_dcl)
-        if forward_dcl:
+    class Rule_struct_dcl(LeadingTokenRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'structure', TokenKind.STRUCT, trivial=False)
+
+        def get_node(self, leading_tokens, hint):
+            name, forward_dcl = self.parser_inst.dcl_header_check_forward()
+            struct = tree.StructNode(name, forward_dcl=forward_dcl)
+            if forward_dcl:
+                return struct
+            self.parser_inst.add_children_in_scope(struct, ('member',), at_least_one=False)
             return struct
-        self.add_children_in_scope(struct, ('member',), at_least_one=False)
-        return struct
 
     @nontrivial_rule
     def m_member(self):
@@ -680,18 +824,21 @@ class IdlParser(Parser, Configurable):
         self.m_token(TokenKind.semicolon)
         return members
 
-    @nontrivial_rule
-    def m_union_dcl(self):
-        name, forward_dcl = self.dcl_header_check_forward(TokenKind.UNION)
-        union = tree.UnionNode(name, forward_dcl=forward_dcl)
-        if forward_dcl:
+    class Rule_union_dcl(LeadingTokenRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'union', TokenKind.UNION, trivial=False)
+
+        def get_node(self, leading_tokens, hint):
+            name, forward_dcl = self.parser_inst.dcl_header_check_forward()
+            union = tree.UnionNode(name, forward_dcl=forward_dcl)
+            if forward_dcl:
+                return union
+            self.parser_inst.m_token(TokenKind.SWITCH)
+            self.parser_inst.m_token(TokenKind.lparens)
+            union.disc_type = self.parser_inst.m_switch_type_spec()
+            self.parser_inst.m_token(TokenKind.rparens)
+            self.parser_inst.add_children_in_scope(union, 'case')
             return union
-        self.m_token(TokenKind.SWITCH)
-        self.m_token(TokenKind.lparens)
-        union.disc_type = self.m_switch_type_spec()
-        self.m_token(TokenKind.rparens)
-        self.add_children_in_scope(union, 'case')
-        return union
 
     @nontrivial_rule
     def m_switch_type_spec(self):
@@ -740,15 +887,18 @@ class IdlParser(Parser, Configurable):
     def m_enumerator(self):
         return tree.EnumeratorNode(self.m_identifier())
 
-    @nontrivial_rule
-    def m_enum_dcl(self):
-        self.m_token(TokenKind.ENUM)
-        enum_node = tree.EnumNode()
-        enum_node.name = self.m_identifier()
-        self.m_begin_scope()
-        enum_node.add_children(self.comma_list_of('enumerator', self.end_scope))
-        self.m_end_scope()
-        return enum_node
+    class Rule_enum_dcl(LeadingTokenRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'enumeration', TokenKind.ENUM, trivial=False)
+
+        def get_node(self, leading_tokens, hint):
+            parser = self.parser_inst
+            enum_node = tree.EnumNode()
+            enum_node.name = parser.m_identifier()
+            parser.m_begin_scope()
+            enum_node.add_children(parser.comma_list_of('enumerator', parser.end_scope))
+            parser.m_end_scope()
+            return enum_node
 
     @nontrivial_rule
     def m_array_declarator(self):
@@ -762,15 +912,17 @@ class IdlParser(Parser, Configurable):
     def m_simple_declarator(self):
         return Declarator(self.m_identifier())
 
-    @nontrivial_rule
-    def m_typedef_dcl(self):
-        self.m_token(TokenKind.TYPEDEF)
-        base_type, name_maybe_arrays = self.m_type_declarator()
-        typedefs = []
-        for name_maybe_array in name_maybe_arrays:
-            typedefs.append(tree.TypedefNode(
-                name_maybe_array.name, name_maybe_array.get_type(base_type)))
-        return typedefs
+    class Rule_typedef_dcl(LeadingTokenRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'typedef', TokenKind.TYPEDEF, trivial=False)
+
+        def get_node(self, leading_tokens, hint):
+            base_type, name_maybe_arrays = self.parser_inst.m_type_declarator()
+            typedefs = []
+            for name_maybe_array in name_maybe_arrays:
+                typedefs.append(tree.TypedefNode(
+                    name_maybe_array.name, name_maybe_array.get_type(base_type)))
+            return typedefs
 
     @nontrivial_rule
     def m_type_declarator(self):
@@ -810,21 +962,28 @@ class IdlParser(Parser, Configurable):
 
     # TODO: expect_dcl, attr_dcl, and friends
 
-    @nontrivial_rule
-    def m_interface_dcl(self):
-        # interface_forward_dcl / interface_header
-        # local is Building Block CORBA-Specific - Interfaces
-        local = self.m_token_maybe(TokenKind.LOCAL) is not None
-        name, forward_dcl = self.dcl_header_check_forward(TokenKind.INTERFACE)
-        interface = tree.InterfaceNode(name, forward_dcl=forward_dcl, local=local)
-        if forward_dcl:
+    class Rule_interface_dcl(LeadingTokenRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'interface', {
+                (TokenKind.LOCAL, TokenKind.INTERFACE): (None,),
+                TokenKind.INTERFACE: (None,),
+            }, trivial=False)
+
+        def get_node(self, leading_tokens, hint):
+            # interface_forward_dcl / interface_header
+            # local is Building Block CORBA-Specific - Interfaces
+            parser = self.parser_inst
+            name, forward_dcl = parser.dcl_header_check_forward()
+            interface = tree.InterfaceNode(name, forward_dcl=forward_dcl,
+                local=leading_tokens[0] is TokenKind.LOCAL)
+            if forward_dcl:
+                return interface
+            # interface_inheritance_spec
+            if parser.m_token_maybe(TokenKind.colon):
+                parser.comma_list_of('scoped_name', parser.end_scope)
+            # interface_body
+            parser.add_children_in_scope(interface, ('export',), at_least_one=False)
             return interface
-        # interface_inheritance_spec
-        if self.m_token_maybe(TokenKind.colon):
-            self.comma_list_of('scoped_name', self.end_scope)
-        # interface_body
-        self.add_children_in_scope(interface, ('export',), at_least_one=False)
-        return interface
 
     @nontrivial_rule
     def m_export(self):
@@ -865,22 +1024,21 @@ class IdlParser(Parser, Configurable):
         self.m_token(TokenKind.lparens)
         rv = self.match(('annotation_appl_named_params', 'const_expr'))
         self.m_token(TokenKind.rparens)
-        return rv
+        return rv if isinstance(rv, list) else [rv]
 
     @nontrivial_rule
     def m_annotation_appl(self):
         self.in_annotation = True
         try:
-            self.m_token(TokenKind.at)
+            at = self.m_token(TokenKind.at)
             name = self.m_scoped_name()
-            params = self.m_annotation_appl_params_maybe()
-            if params is None:
-                params = []
+            node = tree.UnknownAnnotationNode(name, self.m_annotation_appl_params_maybe())
+            node.loc = at.loc
         except Exception:
             raise
         finally:
             self.in_annotation = False
-        return [name, params]
+        return node
 
     @nontrivial_rule
     def m_annotation_appl_named_param(self):
@@ -913,22 +1071,32 @@ class IdlParser(Parser, Configurable):
         return l[0] if len(l) > 0 else None
 
     def handle_accepted_ignored_elements(self, ignored_elements):
-        if self.config['warn_about_unsupported_annotations']:
-            for element in ignored_elements:
-                print('Ignored unsupported annotation', element)
+        how = self.config['warn_about_unsupported_annotations']
+        once = how == 'once'
+        if how:
+            for anno in ignored_elements:
+                if once and anno.name in self.warned_annotations:
+                    continue
+                line = self.source_lines.get_line(anno.loc.source_key, anno.loc.line)
+                log_warning(anno.loc, 'Ignored unsupported annotation', line)
+                self.warned_annotations.add(anno.name)
         return ignored_elements
 
     # Building Block Extended Data-Types ======================================
 
-    @nontrivial_rule
-    def m_bitmask_dcl(self):
-        bit_bound = self.get_annotation_by_name('bit_bound')
-        self.m_token(TokenKind.BITMASK)
-        rv = tree.BitMaskNode(self.m_identifier(), bit_bound)
-        self.m_begin_scope()
-        rv.add_children(self.comma_list_of('bit_value', self.end_scope))
-        self.m_end_scope()
-        return rv
+    class Rule_bitmask_dcl(LeadingTokenRule):
+        def __init__(self, parser_inst, name):
+            super().__init__(parser_inst, name, 'bitmask', TokenKind.BITMASK, trivial=False)
+
+        def get_node(self, leading_tokens, hint):
+            parser = self.parser_inst
+            # TODO: at this point we can't get annotation from before the bitmask keyword
+            # bit_bound = parser.get_annotation_by_name('bit_bound')
+            rv = tree.BitMaskNode(parser.m_identifier(), 16)
+            parser.m_begin_scope()
+            rv.add_children(parser.comma_list_of('bit_value', parser.end_scope))
+            parser.m_end_scope()
+            return rv
 
     @nontrivial_rule
     def m_bit_value(self):
