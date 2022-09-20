@@ -44,9 +44,12 @@ class SerializerDetails:
         self.raw_data = raw_data
 
     def __str__(self):
-        if self.message:
-            return '{} ({}{})'.format(self.what, str(self.status), self.message)
         return self.what
+
+    def get_message(self):
+        if self.message:
+            return '({}{})'.format(str(self.status), self.message)
+        return None
 
     def __repr__(self):
         return '{}: {}'.format(repr(str(self)), repr(self.raw_data))
@@ -88,7 +91,7 @@ class Serializer:
 
     def write_string(self, value, include_nul, *encode_args, **encode_kwargs):
         as_bytes = value.encode(*encode_args, **encode_kwargs)
-        self.write_u32(len(as_bytes) + 1 if include_nul else 0)
+        self.write_u32(len(as_bytes) + (1 if include_nul else 0))
         self.write(as_bytes)
         if include_nul:
             self.write_u8(0)
@@ -178,9 +181,10 @@ class Serializer:
         if self.save_details:
             status = SerializerStatus.ok
             message = None
-            if raw_data[-1] != 0:
+            if raw_size and include_nul and raw_data[-1] != 0:
                 status = SerializerStatus.warning
                 message = 'string is not terminated with nul'
+                include_nul = False
             self.details.append(SerializerDetails(
                 DataKind.user_data, 'string data', status, message, raw_data=raw_data))
         return raw_data[:raw_size - int(include_nul)].decode(*decode_args, **decode_kwargs)

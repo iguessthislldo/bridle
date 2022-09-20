@@ -30,9 +30,16 @@ class DataDumper:
             if isinstance(child.type_node, PrimitiveNode):
                 value = serializer.read_primitive_kind(child.type_node.kind)
                 details = serializer.take_details()
-                value_lines = ["{}: [user_data]{}[/user_data]".format(child.name, repr(value))]
+                value_lines = [
+                    "[bold]{}: [user_data]{}[/user_data][/bold]".format(child.name, repr(value))
+                ]
                 for detail in details:
-                    value_lines.append(str(detail))
+                    detail_str = '[{0}]{1}[/{0}]'.format(detail.kind.name, detail.what)
+                    message = detail.get_message()
+                    if message:
+                        color = 'red' if detail.status == detail.status.error else 'yellow'
+                        detail_str += ' [{0}]{1}[no {0}]'.format(color, message)
+                    value_lines.append(detail_str)
                 contents.append((details, value_lines))
             else:
                 raise TypeError(child.type_node.__class__.__name__ + ' is not supported')
@@ -69,7 +76,7 @@ class DataDumper:
             lines.append(' '.join(line))
         return pos, lines
 
-    def dump(self, buffer, topic_type_name):
+    def dump_i(self, buffer, topic_type_name):
         type_node = None
         for tree in self.trees:
             type_node = tree.get(topic_type_name)
@@ -92,6 +99,11 @@ class DataDumper:
                 value_lines.append(value_line)
             raw_data_entries.append('\n'.join(raw_data_lines))
             value_entries.append('\n'.join(value_lines))
+
+        return value_entries, raw_data_entries
+
+    def dump(self, buffer, topic_type_name):
+        value_entries, raw_data_entries = self.dump_i(buffer, topic_type_name)
 
         table = RichTable(title=topic_type_name)
         table.add_column("Values")
