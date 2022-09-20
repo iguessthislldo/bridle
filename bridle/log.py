@@ -5,6 +5,8 @@ import rich.console
 import rich.syntax
 from rich.markup import escape
 
+from .errors import BridleError
+
 errcon = rich.console.Console(stderr=True)
 error_marker = " [red]ERROR:[no red]"
 warn_marker = " [yellow]WARNING:[no yellow]"
@@ -20,15 +22,17 @@ def log_location(con, marker, location, message, line):
             style='bold red', sep='')
 
 
-def log_error(location, message, line=None):
+def log_error(what, line=None):
+    if isinstance(what, BridleError):
+        location = what.location
+        message = what.message_without_location
+    else:
+        location, message = what
     log_location(errcon, error_marker, location, message, line)
 
 
-def log_loc_error(error, line=None):
-    log_error(error.location, error.message_without_location, line)
-
-
-def log_warning(location, message, line=None):
+def log_warning(what, line=None):
+    location, message = what
     log_location(errcon, warn_marker, location, message, line)
 
 

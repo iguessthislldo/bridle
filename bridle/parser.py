@@ -8,7 +8,7 @@ from functools import wraps
 import re
 import inspect
 
-from .utils import PeekIter, ChainedIter, Location
+from .utils import PeekIter, ChainedIter, Location, is_sequence
 from .errors import ParseError
 
 
@@ -318,8 +318,9 @@ class Parser:
         if self.stream.done():
             if callable(what):
                 what = what()
-            raise ParseError(self.stream.loc(),
-                'Expected {}, but reached end of input', ' or '.join(what))
+            if is_sequence(what):
+                what = ' or '.join(what)
+            raise ParseError(self.stream.loc(), 'Expected {}, but reached end of input', what)
 
     def assert_end(self):
         if not self.stream.done():

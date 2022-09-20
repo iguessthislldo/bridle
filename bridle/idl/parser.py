@@ -1,5 +1,6 @@
 from pathlib import Path
 from io import StringIO
+import enum
 
 from pcpp import Preprocessor
 
@@ -14,7 +15,7 @@ from ..const_expr import ConstValue, Op, ConstExpr
 from ..parser import Parser, nontrivial_rule, Rule
 from .tokenizer import IdlTokenizer, Token, TokenKind, dump_tokens, \
     set_location_from_line_statement
-from ..log import log_loc_error, log_warning
+from ..log import log_error, log_warning
 
 
 class IdlFile:
@@ -232,12 +233,28 @@ class LeadingTokenMultiRule(Rule):
             self.parser_inst, self.help_string, failed_cb=self.method_rule_fallback))
 
 
+class UnsupportedAnnotations(enum.Enum):
+    warn_once = 'warn-once'
+    warn_all = 'warn-all'
+    error = 'error'
+    ignore = 'ignore'
+
+    def __bool__(self):
+        return self != self.ignore
+
+    def __str__(self):
+        return self.value
+
+    def __repr__(self):
+        return str(self)
+
+
 class IdlParser(Parser, Configurable):
     @classmethod
     def define_config_options(cls, options):
         options.add_options(dict(
             includes=[], defines=[],
-            warn_about_unsupported_annotations='once',
+            unsupported_annotations=UnsupportedAnnotations.warn_once,
             debug_all=False,
             dump_pp_output=False,
             dump_tokens=False,
@@ -261,7 +278,13 @@ class IdlParser(Parser, Configurable):
         ]])
         self.tokenizer = IdlTokenizer(config_parent=('tokenizer_', self))
         self.source_lines = SourceLines()
-        self.warned_annotations = set()
+        self.unsupported_annotations_seen_unknown = set()
+        self.unsupported_annotations_seen_ignored = set()
+        self.error_count = 0
+
+    def log_error(self, arg, line):
+        self.error_count += 1
+        log_error(arg, line)
 
     def parse_idl(self, idl_file):
         if self.config['raise_parse_errors']:
@@ -269,7 +292,7 @@ class IdlParser(Parser, Configurable):
         else:
             def location_error_handler(self, error):
                 line = self.source_lines.get_line(error.location.source_key, error.location.line)
-                log_loc_error(error, line)
+                self.log_error(error, line)
                 raise ErrorsReported('Syntax error occurred')
 
         # Preprocessor Phase
@@ -1070,16 +1093,22 @@ class IdlParser(Parser, Configurable):
         l = self.get_annotations_by_name(name, max_count=-1)
         return l[0] if len(l) > 0 else None
 
+    def unsupported_annotations(self):
+        return UnsupportedAnnotations(self.config['unsupported_annotations'])
+
     def handle_accepted_ignored_elements(self, ignored_elements):
-        how = self.config['warn_about_unsupported_annotations']
-        once = how == 'once'
-        if how:
+        handle = self.unsupported_annotations()
+        if handle:
             for anno in ignored_elements:
-                if once and anno.name in self.warned_annotations:
+                if handle == handle.warn_once and anno.name in self.unsupported_annotations_seen_ignored:
                     continue
+                what = (anno.loc, 'Unsupported annotation')
                 line = self.source_lines.get_line(anno.loc.source_key, anno.loc.line)
-                log_warning(anno.loc, 'Ignored unsupported annotation', line)
-                self.warned_annotations.add(anno.name)
+                if handle == handle.error:
+                    self.log_error(what, line)
+                else:
+                    log_warning(what, line)
+                self.unsupported_annotations_seen_ignored.add(anno.name)
         return ignored_elements
 
     # Building Block Extended Data-Types ======================================

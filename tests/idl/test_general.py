@@ -4,25 +4,23 @@ import os
 
 import bridle
 
-idl_parser = bridle.IdlParser(raise_parse_errors=True)
+idl_parser = bridle.IdlParser(
+    raise_parse_errors=True,
+    unsupported_annotations=bridle.idl.UnsupportedAnnotations.ignore,
+    allow_empty_modules=True,
+)
 test_path = Path(__file__).parent
-opendds_path = Path(os.environ.get('DDS_ROOT', 'OpenDDS'))
+opendds_path = Path(os.environ.get('OPENDDS_ROOT', 'OpenDDS'))
 
 
 # TODO
 class IdlFileTests(unittest.TestCase):
 
     def test_general_test_idl(self):
-        idl_parser.parse(
-            [test_path / 'general_test.idl'],
-            warn_about_unsupported_annotations=False,
-        )
+        idl_parser.parse([test_path / 'general_test.idl'])
 
     def test_xtypes_type_object_idl(self):
-        idl_parser.parse(
-            [test_path / 'xtypes-type-object.idl'],
-            warn_about_unsupported_annotations=False,
-        )
+        idl_parser.parse([test_path / 'xtypes-type-object.idl'])
 
 
 # TODO
@@ -30,19 +28,26 @@ class IdlFileTests(unittest.TestCase):
 class ExternalIdlFileTests(unittest.TestCase):
 
     @unittest.skipUnless(opendds_path.is_dir(),
-        "DDS_ROOT environment variable is not a valid directory")
+        "OPENDDS_ROOT environment variable is not a valid directory")
     def test_opendds_idl_files(self):
-        tao_path = Path(os.environ.get('TAO_ROOT', opendds_path / 'ACE_TAO/TAO'))
+        tao_path = Path(os.environ.get('TAO_ROOT', 'ACE_TAO/TAO'))
         settings = dict(
             includes=[
-                opendds_path,
                 tao_path,
                 tao_path / 'orbsvcs',
+                opendds_path,
+                opendds_path / 'dds/DCPS/RTPS',
                 opendds_path / 'performance-tests/DCPS/Sync',
-                opendds_path / 'performance-tests/bench_2/builder_idl',
+                opendds_path / 'performance-tests/bench/builder_idl',
+                opendds_path / 'tests/cmake/Nested_IDL/transmission',
+                opendds_path / 'tests/cmake/Nested_IDL/engine',
+                opendds_path / 'tests/cmake/Nested_IDL/engine/engine_stats',
+                opendds_path / 'tests/cmake/install/library/include',
             ],
             defines=[
-                'OPENDDS_SECURITY'
+                '__TAO_IDL=0xffffffff'
+                '__OPENDDS_IDL=0xffffffff',
+                'OPENDDS_SECURITY',
             ],
         )
 
