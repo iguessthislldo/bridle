@@ -1100,7 +1100,8 @@ class IdlParser(Parser, Configurable):
         handle = self.unsupported_annotations()
         if handle:
             for anno in ignored_elements:
-                if handle == handle.warn_once and anno.name in self.unsupported_annotations_seen_ignored:
+                if handle == handle.warn_once and \
+                        anno.name in self.unsupported_annotations_seen_ignored:
                     continue
                 what = (anno.loc, 'Unsupported annotation')
                 line = self.source_lines.get_line(anno.loc.source_key, anno.loc.line)
