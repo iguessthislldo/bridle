@@ -44,26 +44,26 @@ class Stream:
     def peek(self, count=1, offset=0):
         return self.iters[-1].peek(count, offset=offset)
 
-    def loc(self, value=None):
-        if value is not None:
-            self.locs[-1] = value
-            return value
-        return self.locs[-1]
+    def loc(self):
+        return Location(self.locs[-1])
+
+    def override_loc(self, new_loc):
+        self.locs[-1] = Location(new_loc)
 
     def advance(self, arg=1, loc=None):
         by = self.iters[-1].advance(arg)
         if loc is None:
             if self.over_strings:
-                self.loc().advance(by)
+                self.locs[-1].advance(by)
             else:
                 for token in by:
-                    self.loc().advance(token)
+                    self.locs[-1].advance(token)
         else:
             self.locs[-1] = Location(loc)
 
     def push(self):
         self.iters.append(ChainedIter(self.iters[-1]))
-        self.locs.append(Location(self.loc()))
+        self.locs.append(self.loc())
         self.furthest_errors.append(self.furthest_errors[-1])
         self.furthest_error_locs.append(Location(self.furthest_error_locs[-1]))
         self.ignored_elements.append([])
@@ -341,7 +341,7 @@ class Parser:
             rules = {rules: []}
         elif not isinstance(rules, dict):
             rules = {rule: [] for rule in rules}
-        loc = Location(self.stream.loc())
+        loc = self.stream.loc()
         for rule, args in rules.items():
             matched, value = self.match_single_rule(rule, args)
             if matched:

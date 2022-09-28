@@ -63,12 +63,14 @@ class PreprocessorStatement(AbstractToken):
 line_regex = re.compile(r'\s*#\s*line\s+(\d+)(?:\s+"(.*)")?')
 
 
-def set_location_from_line_statement(loc, text):
+def set_location_from_line_statement(stream, text):
     m = line_regex.fullmatch(text)
     if m:
         lineno, path = m.groups()
+        loc = stream.loc()
         loc.set_line(path, Location.get_source_key(path), int(lineno) - 1)
         # It's lineno - 1 to account for the newline after this
+        stream.override_loc(loc)
         return True
     return False
 
@@ -382,7 +384,7 @@ class IdlTokenizer(Parser, Configurable):
         return s
 
     def expect_chars_matching(self, match_func, what, perchar=False, include_last=False):
-        loc = Location(self.stream.loc())
+        loc = self.stream.loc()
         s = self.peek_chars_matching(match_func, perchar, include_last)
         if s:
             self.stream.advance(s)
@@ -437,10 +439,10 @@ class IdlTokenizer(Parser, Configurable):
         loc = self.stream.loc()
         if self.stream.peek() == '#' and self.seen_idl_on_line:
             self.stream.advance()
-            raise ParseError(loc, 'Prepreprocessor statment after IDL')
+            raise ParseError(self.stream.loc(), 'Prepreprocessor statement after IDL')
         text = self.expect_chars_matching(self.preprocessor_statement_regex.fullmatch,
             ['preprocessor statement'])
-        set_location_from_line_statement(self.stream.loc(), text)
+        set_location_from_line_statement(self.stream, text)
         return Token(loc, text, TokenKind.preprocessor_statement)
 
     def m_whitespace(self):
@@ -611,7 +613,7 @@ class IdlTokenizer(Parser, Configurable):
 
     def get_character_literal(self, token_kind):
         traits = token_kind.value
-        loc = Location(self.stream.loc())
+        loc = self.stream.loc()
         quote = '"' if traits.is_string else "'"
         text = ''
         if traits.is_wide:
@@ -644,7 +646,7 @@ class IdlTokenizer(Parser, Configurable):
         return self.get_character_literal(TokenKind.wstring)
 
     def m_punctuation(self, what=['punctuation']):
-        loc = Location(self.stream.loc())
+        loc = self.stream.loc()
         p = Punctuation.in_stream(self.stream)
         if p is not None:
             self.stream.advance(str(p))

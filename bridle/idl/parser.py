@@ -30,7 +30,6 @@ class IdlFile:
         else:
             raise ValueError('Either path or direct_input must be set. Not both or neither.')
         self.contents = None
-        self.positions = []
 
     def name(self):
         return self.path
@@ -141,23 +140,18 @@ class LeadingTokensData:
         self._copy(self.data, other.data)
 
     def match_i(self, parser, help_string):
-        parser.m_ws_before()
-        parser.assert_not_end(help_string)
         got_tokens = []
         leading_tokens = self.data
+        token = None
         while True:
-            parser.m_ws_before()
-            tokens = parser.stream.peek()
-            if tokens:
-                token = tokens[0]
-                if token.kind in leading_tokens:
-                    got_tokens.append(token)
-                    leading_tokens = leading_tokens[token.kind]
-                    parser.stream.advance()
-                else:
-                    break
-            else:
+            token_kinds = [tk for tk in leading_tokens.keys() if tk is not None]
+            token_maybe = parser.m_token_maybe(*token_kinds, ws_after=False)
+            if token_maybe is None:
                 break
+            else:
+                token = token_maybe
+                got_tokens.append(token)
+                leading_tokens = leading_tokens[token.kind]
         if None not in leading_tokens:
             return True, [token], None, None
         hint, get_node = leading_tokens[None]
@@ -172,7 +166,6 @@ class LeadingTokensData:
                     return rv
             raise ExpectedError(Location(parser.stream.loc()), help_string, repr(tokens[0]))
         rv = get_node(tokens, hint)
-        parser.m_ws_after()
         return rv
 
 
@@ -405,7 +398,7 @@ class IdlParser(Parser, Configurable):
                 self.stream.advance()
             elif t.kind is TokenKind.preprocessor_statement:
                 self.stream.advance()
-                set_location_from_line_statement(self.stream.loc(), t.text)
+                set_location_from_line_statement(self.stream, t.text)
             elif t.kind is TokenKind.preparsed_annotation:
                 self.stream.push_ignored_element(t.value)
                 self.stream.advance()
@@ -830,11 +823,12 @@ class IdlParser(Parser, Configurable):
             super().__init__(parser_inst, name, 'structure', TokenKind.STRUCT, trivial=False)
 
         def get_node(self, leading_tokens, hint):
-            name, forward_dcl = self.parser_inst.dcl_header_check_forward()
+            p = self.parser_inst
+            name, forward_dcl = p.dcl_header_check_forward()
             struct = tree.StructNode(name, forward_dcl=forward_dcl)
             if forward_dcl:
                 return struct
-            self.parser_inst.add_children_in_scope(struct, ('member',), at_least_one=False)
+            p.add_children_in_scope(struct, ('member',), at_least_one=False)
             return struct
 
     @nontrivial_rule

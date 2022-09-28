@@ -97,7 +97,7 @@ class IdlTokenizerTests(unittest.TestCase):
 
     def test_preprocessor_after_idl_causes_error(self):
         tokenizer = IdlTokenizer()
-        with self.assertRaisesRegex(ParseError, 'Prepreprocessor statment after IDL'):
+        with self.assertRaisesRegex(ParseError, 'Prepreprocessor statement after IDL'):
             tokenizer.tokenize('const x = 10; #define V 100')
 
     def test_comments(self):
