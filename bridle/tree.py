@@ -209,6 +209,7 @@ class Node:
         self.tree = None
         self.def_index = None
         self.marked_for_trim = False
+        self.annotations = []
 
     @property
     def name(self):
@@ -375,6 +376,21 @@ class ContainerNode(Node):
             raise InternalError('{} can\'t have any children like {}',
                 node.scoped_name, get_scoped_name)
         return node.get(get_scoped_name)
+
+    def __getitem__(self, scoped_name):
+        return self.get(scoped_name)
+
+    def __len__(self):
+        return len(self.children_dict)
+
+    def child_names(self):
+        return self.children_dict.keys()
+
+    def child_nodes(self):
+        return self.children_dict.values()
+
+    def __iter__(self):
+        return iter(self.children_dict.items())
 
     def emplace_phase(self):
         self.emplace_nodes(self.children)
@@ -702,6 +718,7 @@ class ParameterNode(Node):
         super().__init__(name)
         self.attr = attr
         self.type = type
+        self.raises = []
 
     def _repr(self, short):
         return self.repr_template('{} {}', self.attr.name, repr(self.type), short=short)

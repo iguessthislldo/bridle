@@ -42,7 +42,7 @@ class BaseIter:
             start = self.pos
         start += offset
         if start < self.pos:
-            raise IndexError("index {} is no in range".format(start))
+            raise IndexError("index {} is not in range".format(start))
         return self.return_values(self._peek(count, start))
 
 

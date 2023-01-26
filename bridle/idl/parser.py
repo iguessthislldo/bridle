@@ -112,7 +112,7 @@ class LeadingTokensData:
         self.data = data
 
     @classmethod
-    def from_input(cls, input_data, get_node):
+    def from_input(cls, input_data, get_node, inspect_annotations):
         if not isinstance(input_data, dict):
             input_data = {tk: None for tk in must_be_sequence(input_data)}
         data = {}
@@ -122,7 +122,7 @@ class LeadingTokensData:
                 if token_kind not in put:
                     put[token_kind] = {}
                 put = put[token_kind]
-            put[None] = (hint, get_node)
+            put[None] = (hint, get_node, inspect_annotations)
         return cls(data)
 
     def _copy(self, this_dict, other_dict):
@@ -140,32 +140,52 @@ class LeadingTokensData:
         self._copy(self.data, other.data)
 
     def match_i(self, parser, help_string):
+        parser.m_ws_after() # Stop at any annotation
+
+        # Peek over the tokens comming up in the stream and see if they match
+        # any pattern we're looking for. Don't advance past annotations so we
+        # can give a chance for a callback to inspect them.
         got_tokens = []
         leading_tokens = self.data
         token = None
+        peek_pos = 0
+        has_annotations = False
         while True:
-            token_kinds = [tk for tk in leading_tokens.keys() if tk is not None]
-            token_maybe = parser.m_token_maybe(*token_kinds, ws_after=False)
-            if token_maybe is None:
-                break
-            else:
-                token = token_maybe
+            parser.assert_not_end(lambda: [str(tk) for tk in leading_tokens.keys()])
+            token = parser.stream.peek(offset=peek_pos)[0]
+            if token.kind in leading_tokens:
                 got_tokens.append(token)
                 leading_tokens = leading_tokens[token.kind]
+            elif token.kind is TokenKind.preprocessor_statement:
+                pass
+            elif token.kind is TokenKind.preparsed_annotation:
+                has_annotations = True
+            elif not token.is_ws():
+                break
+            peek_pos += 1
         if None not in leading_tokens:
-            return True, [token], None, None
-        hint, get_node = leading_tokens[None]
-        return False, got_tokens, hint, get_node
+            # Advance the stream so error reporting is as correct as possible.
+            for token in got_tokens:
+                parser.m_token(token.kind)
+            return True, [token], None, None, None
+
+        # Now do the annotation callback and advance the stream
+        hint, get_node, inspect_annotations = leading_tokens[None]
+        annotations = inspect_annotations() if has_annotations else []
+        for token in got_tokens:
+            parser.m_token(token.kind)
+
+        return False, got_tokens, hint, get_node, annotations
 
     def match(self, parser, help_string, failed_cb=None):
-        failed, tokens, hint, get_node = self.match_i(parser, help_string)
+        failed, tokens, hint, get_node, annotations = self.match_i(parser, help_string)
         if failed:
             if failed_cb is not None:
                 rv = failed_cb(tokens[0])
                 if rv is not None:
                     return rv
             raise ExpectedError(Location(parser.stream.loc()), help_string, repr(tokens[0]))
-        rv = get_node(tokens, hint)
+        rv = get_node(tokens, hint, annotations)
         return rv
 
 
@@ -178,13 +198,17 @@ class LeadingTokenRule(Rule):
     def __init__(self, parser_inst, name, help_string, leading_tokens, trivial=None):
         super().__init__(parser_inst, name, trivial=trivial)
         self.help_string = help_string
-        self.leading_tokens_data = LeadingTokensData.from_input(leading_tokens, self.get_node)
+        self.leading_tokens_data = LeadingTokensData.from_input(
+            leading_tokens, self.get_node, self.inspect_annotations)
 
     def init_impl(self):
         pass
 
-    def get_node(self, leading_tokens, hint):
+    def get_node(self, leading_tokens, hint, annotations):
         raise NotImplementedError
+
+    def inspect_annotations(self):
+        pass
 
     def match(self):
         return self.leading_tokens_data.match(self.parser_inst, self.help_string)
@@ -399,7 +423,7 @@ class IdlParser(Parser, Configurable):
             elif t.kind is TokenKind.preprocessor_statement:
                 self.stream.advance()
                 set_location_from_line_statement(self.stream, t.text)
-            elif t.kind is TokenKind.preparsed_annotation:
+            elif annotations and t.kind is TokenKind.preparsed_annotation:
                 self.stream.push_ignored_element(t.value)
                 self.stream.advance()
             else:
@@ -534,7 +558,7 @@ class IdlParser(Parser, Configurable):
         def __init__(self, parser_inst, name):
             super().__init__(parser_inst, name, 'module', TokenKind.MODULE, trivial=False)
 
-        def get_node(self, leading_tokens, hint):
+        def get_node(self, leading_tokens, hint, annotations):
             module = tree.ModuleNode(self.parser_inst.m_identifier())
             self.parser_inst.add_children_in_scope(module, ('definition',),
                 at_least_one=not self.parser_inst.config['allow_empty_modules'])
@@ -554,7 +578,7 @@ class IdlParser(Parser, Configurable):
             super().__init__(
                 parser_inst, name, 'constant declaration', TokenKind.CONST, trivial=False)
 
-        def get_node(self, leading_tokens, hint):
+        def get_node(self, leading_tokens, hint, annotations):
             constant = tree.ConstantNode(self.parser_inst.m_const_type())
             constant.name = self.parser_inst.m_identifier()
             self.parser_inst.m_token(TokenKind.equals)
@@ -591,7 +615,7 @@ class IdlParser(Parser, Configurable):
                 TokenKind.wstring: tree.PrimitiveKind.s16,  # wide_string_literal
             }, trivial=True)
 
-        def get_node(self, leading_tokens, hint):
+        def get_node(self, leading_tokens, hint, annotations):
             return ConstValue(leading_tokens[0].value, hint)
 
     def m_const_expr(self):
@@ -719,7 +743,7 @@ class IdlParser(Parser, Configurable):
             super().__init__(parser_inst, name,
                 help_string + ' type', leading_tokens, trivial=False)
 
-        def get_node(self, leading_tokens, hint):
+        def get_node(self, leading_tokens, hint, annotations):
             return tree.PrimitiveNode(hint)
 
     class Rule_floating_pt_type(PrimitiveNodeRule):
@@ -822,7 +846,7 @@ class IdlParser(Parser, Configurable):
         def __init__(self, parser_inst, name):
             super().__init__(parser_inst, name, 'structure', TokenKind.STRUCT, trivial=False)
 
-        def get_node(self, leading_tokens, hint):
+        def get_node(self, leading_tokens, hint, annotations):
             p = self.parser_inst
             name, forward_dcl = p.dcl_header_check_forward()
             struct = tree.StructNode(name, forward_dcl=forward_dcl)
@@ -845,7 +869,7 @@ class IdlParser(Parser, Configurable):
         def __init__(self, parser_inst, name):
             super().__init__(parser_inst, name, 'union', TokenKind.UNION, trivial=False)
 
-        def get_node(self, leading_tokens, hint):
+        def get_node(self, leading_tokens, hint, annotations):
             name, forward_dcl = self.parser_inst.dcl_header_check_forward()
             union = tree.UnionNode(name, forward_dcl=forward_dcl)
             if forward_dcl:
@@ -908,7 +932,7 @@ class IdlParser(Parser, Configurable):
         def __init__(self, parser_inst, name):
             super().__init__(parser_inst, name, 'enumeration', TokenKind.ENUM, trivial=False)
 
-        def get_node(self, leading_tokens, hint):
+        def get_node(self, leading_tokens, hint, annotations):
             parser = self.parser_inst
             enum_node = tree.EnumNode()
             enum_node.name = parser.m_identifier()
@@ -933,7 +957,7 @@ class IdlParser(Parser, Configurable):
         def __init__(self, parser_inst, name):
             super().__init__(parser_inst, name, 'typedef', TokenKind.TYPEDEF, trivial=False)
 
-        def get_node(self, leading_tokens, hint):
+        def get_node(self, leading_tokens, hint, annotations):
             base_type, name_maybe_arrays = self.parser_inst.m_type_declarator()
             typedefs = []
             for name_maybe_array in name_maybe_arrays:
@@ -986,13 +1010,18 @@ class IdlParser(Parser, Configurable):
                 TokenKind.INTERFACE: (None,),
             }, trivial=False)
 
-        def get_node(self, leading_tokens, hint):
+        def inspect_annotations(self):
+            parser = self.parser_inst
+            return parser.get_annotations()
+
+        def get_node(self, leading_tokens, hint, annotations):
             # interface_forward_dcl / interface_header
             # local is Building Block CORBA-Specific - Interfaces
             parser = self.parser_inst
             name, forward_dcl = parser.dcl_header_check_forward()
             interface = tree.InterfaceNode(name, forward_dcl=forward_dcl,
                 local=leading_tokens[0] is TokenKind.LOCAL)
+            interface.annotations = annotations
             if forward_dcl:
                 return interface
             # interface_inheritance_spec
@@ -1021,7 +1050,10 @@ class IdlParser(Parser, Configurable):
         self.m_token(TokenKind.lparens)
         op.add_children(self.comma_list_of('parameter_dcl', TokenKind.rparens, at_least_one=False))
         self.m_token(TokenKind.rparens)
-        # TODO: raises_expr
+        if self.m_token_maybe(TokenKind.RAISES):
+            self.m_token(TokenKind.lparens)
+            op.raises = self.comma_list_of('scoped_name', TokenKind.rparens)
+            self.m_token(TokenKind.rparens)
         return op
 
     @nontrivial_rule
@@ -1067,12 +1099,12 @@ class IdlParser(Parser, Configurable):
     def m_annotation_appl_named_params(self):
         return self.comma_list_of('annotation_appl_named_param')
 
-    def get_annotations(self, filter_func, max_count=None):
+    def get_annotations(self, filter_func=None, max_count=None):
         self.m_ws_before()
         elements = self.stream.get_ignored_elements()
         indices = []
         for i, element in enumerate(elements):
-            if filter_func(element):
+            if filter_func is None or filter_func(element):
                 indices.append(i)
         if max_count is not None:
             max_count = min(len(indices), abs(max_count))
@@ -1081,7 +1113,7 @@ class IdlParser(Parser, Configurable):
 
     def get_annotations_by_name(self, name, max_count=None):
         name = str(name)
-        return self.get_annotations(lambda e: str(e[0]) == name, max_count)
+        return self.get_annotations(lambda e: e.name == name, max_count)
 
     def get_annotation_by_name(self, name):
         l = self.get_annotations_by_name(name, max_count=-1)
@@ -1112,7 +1144,7 @@ class IdlParser(Parser, Configurable):
         def __init__(self, parser_inst, name):
             super().__init__(parser_inst, name, 'bitmask', TokenKind.BITMASK, trivial=False)
 
-        def get_node(self, leading_tokens, hint):
+        def get_node(self, leading_tokens, hint, annotations):
             parser = self.parser_inst
             # TODO: at this point we can't get annotation from before the bitmask keyword
             # bit_bound = parser.get_annotation_by_name('bit_bound')
