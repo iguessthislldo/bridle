@@ -140,7 +140,7 @@ class LeadingTokensData:
         self._copy(self.data, other.data)
 
     def match_i(self, parser, help_string):
-        parser.m_ws_after() # Stop at any annotation
+        parser.m_ws_after()  # Stop at any annotation
 
         # Peek over the tokens comming up in the stream and see if they match
         # any pattern we're looking for. Don't advance past annotations so we
