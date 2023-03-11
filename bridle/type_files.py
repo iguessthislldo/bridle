@@ -61,7 +61,6 @@ def add_type_file_argument_parsing(argparser, **override_defaults):
 def get_idl_parser(parsed_args, **override_values):
     parsed_args_dict = vars(parsed_args)
     parser_args = {k: parsed_args_dict[k] for k in valid_args}
-    check_kwargs(override_values)
     parser_args.update(override_values)
     return IdlParser(**parser_args)
 
