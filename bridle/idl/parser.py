@@ -186,6 +186,8 @@ class LeadingTokensData:
                     return rv
             raise ExpectedError(Location(parser.stream.loc()), help_string, repr(tokens[0]))
         rv = get_node(tokens, hint, annotations)
+        if isinstance(rv, tree.Node):
+            rv.annotations = annotations
         return rv
 
 
@@ -208,7 +210,8 @@ class LeadingTokenRule(Rule):
         raise NotImplementedError
 
     def inspect_annotations(self):
-        pass
+        parser = self.parser_inst
+        return parser.get_annotations()
 
     def match(self):
         return self.leading_tokens_data.match(self.parser_inst, self.help_string)
@@ -1010,10 +1013,6 @@ class IdlParser(Parser, Configurable):
                 TokenKind.INTERFACE: (None,),
             }, trivial=False)
 
-        def inspect_annotations(self):
-            parser = self.parser_inst
-            return parser.get_annotations()
-
         def get_node(self, leading_tokens, hint, annotations):
             # interface_forward_dcl / interface_header
             # local is Building Block CORBA-Specific - Interfaces
@@ -1021,7 +1020,6 @@ class IdlParser(Parser, Configurable):
             name, forward_dcl = parser.dcl_header_check_forward()
             interface = tree.InterfaceNode(name, forward_dcl=forward_dcl,
                 local=leading_tokens[0] is TokenKind.LOCAL)
-            interface.annotations = annotations
             if forward_dcl:
                 return interface
             # interface_inheritance_spec
@@ -1109,7 +1107,7 @@ class IdlParser(Parser, Configurable):
         if max_count is not None:
             max_count = min(len(indices), abs(max_count))
             indices = indices[:max_count] if max_count >= 0 else indices[max_count:]
-        return [elements.pop(i) for i in indices]
+        return [elements[i] for i in indices]
 
     def get_annotations_by_name(self, name, max_count=None):
         name = str(name)
