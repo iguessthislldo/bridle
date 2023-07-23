@@ -1,8 +1,12 @@
 import unittest
 from pathlib import Path
+from textwrap import dedent
+
+from rich.console import Console
 
 import bridle
 from bridle.idl.parser import SourceLines
+from bridle.log import log_error
 from bridle.errors import (
     ParseError,
     PreprocessorError,
@@ -27,8 +31,18 @@ class ErrorReportingTests(unittest.TestCase):
                 #include <invalid_file.idl>
                 '''])
         ex = cm.exception
-        self.assertEqual(SourceLines().get_line(ex.location.source_key, ex.location.line),
-            "const long x == 1;")
+        line = SourceLines().get_line(ex.location.source_key, ex.location.line)
+        self.assertEqual(line, "const long x == 1;")
+        con = Console(color_system=None)
+        with con.capture() as capture:
+            log_error(ex, [line], con=con)
+        self.assertEqual(
+            capture.get(),
+            dedent('''\
+            tests/idl/invalid_file.idl:6:15: ERROR: Expected xor_expr
+            const long x == 1;
+                          ^~~~
+            '''))
 
     def test_nonexistent_include(self):
         line = "#include <nonexistent_include.idl>"

@@ -199,13 +199,27 @@ class Action(enum.Enum):
     trim_old = enum.auto()
 
 
-class Node:
+class Sourced:
+
+    def __init__(self, loc):
+        self.loc = None
+        self.source = None
+
+
+class ScopedNameRef(Sourced, ScopedName):
+
+    def __init__(self, loc, parts=None, absolute=True):
+        Sourced.__init__(self, loc)
+        ScopedName.__init__(self, parts, absolute)
+
+
+class Node(Sourced):
 
     def __init__(self, name=None, parent=None, loc=None):
+        Sourced.__init__(self, loc)
         self.name = name
         self._scoped_name = None
         self.parent = parent
-        self.loc = loc
         self.tree = None
         self.def_index = None
         self.marked_for_trim = False

@@ -1,5 +1,4 @@
 from pathlib import Path
-from io import StringIO
 import enum
 
 from pcpp import Preprocessor
@@ -15,32 +14,8 @@ from ..const_expr import ConstValue, Op, ConstExpr
 from ..parser import Parser, nontrivial_rule, Rule
 from .tokenizer import IdlTokenizer, Token, TokenKind, dump_tokens, \
     set_location_from_line_statement
+from .idl_file import IdlFile
 from ..log import log_error, log_warning
-
-
-class IdlFile:
-
-    def __init__(self, path=None, direct_input=None, effective_path=None):
-        self.path, self.source_key = Location.make_new_source_key(
-            path=path, effective_path=effective_path)
-        if direct_input is not None and path is None:
-            self.idl_file_contents = direct_input
-        elif path is not None and direct_input is None:
-            self.idl_file_contents = self.path.read_text()
-        else:
-            raise ValueError('Either path or direct_input must be set. Not both or neither.')
-        self.contents = None
-
-    def name(self):
-        return self.path
-
-    def load(self, preprocessor):
-        sio = StringIO()
-        preprocessor.parse(self.idl_file_contents, str(self.path))
-        preprocessor.write(sio)
-        if preprocessor.return_code != 0:
-            raise ErrorsReported('Uncaught Preprocessor Error')
-        self.contents = sio.getvalue()
 
 
 class SourceLines:
@@ -68,6 +43,15 @@ class SourceLines:
         if source_key not in self.sources and isinstance(source_key, Path):
             self.add_path_source(source_key)
         return self.sources[source_key][lineno - 1]
+
+    def get_lines_for_tokens(self, tokens):
+        assert len(tokens) > 0
+        start = tokens[0].loc
+        end = tokens[-1].loc
+        lines = []
+        for line in range(start.line, end.line + 1):
+            lines.append(self.get_line(start.source_key, line))
+        return lines
 
 
 class IdlPreprocessor(Preprocessor):
@@ -304,7 +288,7 @@ class IdlParser(Parser, Configurable):
 
     def log_error(self, arg, line):
         self.error_count += 1
-        log_error(arg, line)
+        log_error(arg, [line])
 
     def parse_idl(self, idl_file):
         if self.config['raise_parse_errors']:
@@ -336,6 +320,7 @@ class IdlParser(Parser, Configurable):
 
         # Pre-parse annotations
         self.in_annotation = False
+        self.source = tokens
         processed_tokens = self._parse(
             tokens, name, idl_file.source_key, over_chars=False,
             parse_error_handler=location_error_handler,
@@ -344,6 +329,7 @@ class IdlParser(Parser, Configurable):
 
         # Parse the Tokens into a Tree
         self.in_annotation = False
+        self.source = processed_tokens
         root = self._parse(
             processed_tokens, name, idl_file.source_key, over_chars=False,
             debug=self.config['debug_parser'],
@@ -370,13 +356,39 @@ class IdlParser(Parser, Configurable):
                 self.config['dump_raw_tree'] = True
                 self.config['dump_tree'] = True
 
-            idl_files = [IdlFile(path=path) for path in paths] + \
-                [IdlFile(direct_input=s, effective_path=effective_path) for s in direct_inputs]
+            idl_files = IdlFile.get_from(paths, direct_inputs, effective_path)
             roots = []
             for idl_file in idl_files:
                 self.source_lines.add_idl_file_source(idl_file)
                 roots.append(self.parse_idl(idl_file))
             return roots
+
+    def non_trivial_rule_return_value(self, value):
+        if isinstance(value, tree.Sourced):
+            if value.loc is None or value.source is None:
+                start, end = self.stream.span()
+                whole_source = self.source[start:end]
+                before = True
+                start_idl = 0
+                end_idl = 0
+                set_end_idl = False
+                for i, token in enumerate(whole_source):
+                    if token.is_idl():
+                        if before:
+                            if value.loc is None:
+                                value.loc = token.loc
+                            start_idl = i
+                            before = False
+                        set_end_idl = True
+                    elif set_end_idl:
+                        end_idl = i
+                        set_end_idl = False
+                if value.source is None:
+                    value.source = whole_source[start_idl:end_idl]
+        elif is_sequence(value):
+            for v in value:
+                self.non_trivial_rule_return_value(v)
+        return value
 
     def comma_list_of(self, repeating_rules, terminating_token_kind=None, at_least_one=True):
         rv = []
@@ -520,8 +532,9 @@ class IdlParser(Parser, Configurable):
         while not self.stream.done():
             t = self.stream.peek()[0]
             if t.kind is TokenKind.at:
-                result = Token(t.loc, 'TODO',
-                    TokenKind.preparsed_annotation, value=self.m_annotation_appl())
+                anno = self.m_annotation_appl()
+                result = Token(t.loc, ''.join([str(t) for t in anno.source]),
+                    TokenKind.preparsed_annotation, value=anno)
             else:
                 result = t
                 self.stream.advance()
@@ -574,7 +587,7 @@ class IdlParser(Parser, Configurable):
         parts.append(self.m_identifier())
         while self.m_token_maybe(TokenKind.scope_sep):
             parts.append(self.m_identifier())
-        return tree.ScopedName(parts, absolute)
+        return tree.ScopedNameRef(None, parts, absolute)
 
     class Rule_const_dcl(LeadingTokenRule):
         def __init__(self, parser_inst, name):
@@ -1127,12 +1140,13 @@ class IdlParser(Parser, Configurable):
                 if handle == handle.warn_once and \
                         anno.name in self.unsupported_annotations_seen_ignored:
                     continue
+                anno.loc._length = sum([len(t.text) - t.text.count('\n') for t in anno.source])
                 what = (anno.loc, 'Unsupported annotation')
-                line = self.source_lines.get_line(anno.loc.source_key, anno.loc.line)
+                lines = self.source_lines.get_lines_for_tokens(anno.source)
                 if handle == handle.error:
-                    self.log_error(what, line)
+                    self.log_error(what, lines)
                 else:
-                    log_warning(what, line)
+                    log_warning(what, lines)
                 self.unsupported_annotations_seen_ignored.add(anno.name)
         return ignored_elements
 

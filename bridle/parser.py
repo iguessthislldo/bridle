@@ -41,6 +41,9 @@ class Stream:
     def done(self):
         return self.iters[-1].done()
 
+    def span(self):
+        return self.iters[-1].span()
+
     def peek(self, count=1, offset=0):
         return self.iters[-1].peek(count, offset=offset)
 
@@ -171,7 +174,7 @@ def wrap_rule(rule, name, default_maybe=False):
                 parser = args[0]
             with RuleContext(parser, trivial=False, maybe=maybe,
                     debug_info=lambda: '{} {} {}'.format(name, args, kwargs)):
-                return rule(*args, **kwargs)
+                return parser.non_trivial_rule_return_value(rule(*args, **kwargs))
         return rule_wrapper
 
 
@@ -237,7 +240,10 @@ class Rule:
 
     def __call__(self, *args, maybe=False, **kwargs):
         with RuleContext(self.parser_inst, self.get_debug_info, trivial=self.trivial, maybe=maybe):
-            return self.match(*args, **kwargs)
+            value = self.match(*args, **kwargs)
+            if not self.trivial:
+                self.parser_inst.non_trivial_rule_return_value(value)
+            return value
         assert False, "match should've returned a result or thrown an exception"
 
 
@@ -348,7 +354,10 @@ class Parser:
                 return value
         raise ParseError(loc, 'Expected ' + ' or '.join([str(r) for r in rules]))
 
+    def non_trivial_rule_return_value(self, value):
+        return value
+
     def match_maybe(self, rules):
         with RuleContext(self, trivial=False, maybe=True,
                 debug_info=lambda: 'match_maybe ({})'.format(repr(rules))):
-            return self.match(rules)
+            return self.non_trivial_rule_return_value(self.match(rules))

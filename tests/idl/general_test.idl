@@ -120,3 +120,7 @@ module XModule {
     i32_bounded_seq_t i32_bounded_seq;
   };
 };
+
+local interface Hello {
+    void operation(in int32 value);
+};

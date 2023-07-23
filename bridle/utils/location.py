@@ -27,6 +27,9 @@ class Location:
             self.abspos = None
 
     def advance(self, by):
+        if hasattr(by, 'loc'):
+            self.line = by.loc.line
+            self.col = by.loc.col
         by_str = str(by)
         self.abspos += len(by_str)
         for char in by_str:

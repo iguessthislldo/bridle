@@ -7,6 +7,7 @@ characters in a string or any arbitrary objects in an iterable.
 class BaseIter:
     def __init__(self, peek_iter, pos):
         self.peek_iter = peek_iter
+        self.start_pos = pos
         self.pos = pos
 
     def __iter__(self):
@@ -15,6 +16,9 @@ class BaseIter:
     def __next__(self):
         value = self._next()
         return value
+
+    def span(self):
+        return (self.start_pos, self.pos)
 
     def return_values(self, values):
         return ''.join(values) if self.peek_iter.return_strings else values

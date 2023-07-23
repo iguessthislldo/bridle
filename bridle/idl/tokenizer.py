@@ -45,6 +45,9 @@ class FixedToken(AbstractToken):
 
 
 class Comment(AbstractToken):
+    def __init__(self, single_line):
+        self.single_line = single_line
+
     def is_idl(self):
         return False
 
@@ -190,7 +193,8 @@ class FloatingPoint(AbstractToken):
 
 
 class PreparsedNode(AbstractToken):
-    pass
+    def is_idl(self):
+        return False
 
 
 class TokenKind(enum.Enum):
@@ -200,7 +204,8 @@ class TokenKind(enum.Enum):
     preprocessor_statement = PreprocessorStatement()
     newline = Newline()
     whitespace = Whitespace()
-    comment = Comment()
+    single_line_comment = Comment(single_line=False)
+    multi_line_comment = Comment(single_line=False)
 
     # Primitive Literals and Identifiers
     boolean = Boolean()
@@ -328,7 +333,7 @@ class TokenKind(enum.Enum):
 
 class Token:
     def __init__(self, loc, text, kind, value=None):
-        self.loc = loc
+        self.loc = Location(loc)
         self.text = text
         try:
             self.value = kind.value.value(text) if value is None else value
@@ -343,6 +348,9 @@ class Token:
 
     def is_ws(self):
         return isinstance(self.kind.value, Whitespace)
+
+    def is_keyword(self):
+        return isinstance(self.kind.value, Keyword)
 
     def __str__(self):
         return self.text
@@ -422,7 +430,7 @@ class IdlTokenizer(Parser, Configurable):
         text = self.m_exact('//') + \
             self.expect_chars_matching(lambda c: c != '\n',
                 ["single line comment"], perchar=True)
-        return Token(loc, text, TokenKind.comment)
+        return Token(loc, text, TokenKind.single_line_comment)
 
     @nontrivial_rule
     def m_multi_line_comment(self):
@@ -430,7 +438,7 @@ class IdlTokenizer(Parser, Configurable):
         text = self.m_exact('/*') + \
             self.expect_chars_matching(lambda s: not s.endswith("*/"),
                 ["multi line comment"], include_last=True)
-        return Token(loc, text, TokenKind.comment)
+        return Token(loc, text, TokenKind.multi_line_comment)
 
     preprocessor_statement_regex = re.compile('#[^\n]*')
 
