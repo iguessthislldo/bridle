@@ -3,6 +3,7 @@ from argparse import ArgumentParser
 from .dump_tree import add_dump_tree_subcmd
 from .cdr.data_dumper import add_dump_data_subcmd
 from .lsp import add_lang_server_subcmd
+from .format import add_format_subcmd
 from .type_files import add_type_file_argument_parsing, type_files_to_trees
 
 
@@ -18,6 +19,7 @@ def main():
     add_dump_tree_subcmd(subcmds)
     add_dump_data_subcmd(subcmds)
     add_lang_server_subcmd(subcmds)
+    add_format_subcmd(subcmds)
 
     args = argparser.parse_args()
     if args.profile:

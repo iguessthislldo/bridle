@@ -202,9 +202,18 @@ class Action(enum.Enum):
 class Sourced:
 
     def __init__(self, loc):
-        self.loc = None
+        self.loc = loc
         self.source = None
+        self.source_tokens = None
+        self.all_source_tokens = None
 
+    def source_as_str(self, all=True):
+        from .idl import TokenKind
+        tokens = self.all_source_tokens if all else self.source_tokens
+        if tokens is None:
+            return None
+        tokens = [str(t) for t in tokens if t.kind is not TokenKind.preprocessor_statement]
+        return ''.join(tokens).strip()
 
 class ScopedNameRef(Sourced, ScopedName):
 

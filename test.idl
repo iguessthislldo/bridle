@@ -1,0 +1,15 @@
+@ Hello (
+    "Helo"
+ )
+struct Simple
+{/*This isn't weird at all*/string
+name;	uint32 u32_value;//?
+        boolean     valid;
+        @ Hello (
+    "Helo"
+ ) string str_value;
+};
+const int32 x = 1;
+
+
+const int32 y = 2;

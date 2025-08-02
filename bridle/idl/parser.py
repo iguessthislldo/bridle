@@ -320,7 +320,7 @@ class IdlParser(Parser, Configurable):
 
         # Pre-parse annotations
         self.in_annotation = False
-        self.source = tokens
+        self.source_tokens = tokens
         processed_tokens = self._parse(
             tokens, name, idl_file.source_key, over_chars=False,
             parse_error_handler=location_error_handler,
@@ -329,7 +329,7 @@ class IdlParser(Parser, Configurable):
 
         # Parse the Tokens into a Tree
         self.in_annotation = False
-        self.source = processed_tokens
+        self.source_tokens = processed_tokens
         root = self._parse(
             processed_tokens, name, idl_file.source_key, over_chars=False,
             debug=self.config['debug_parser'],
@@ -365,14 +365,14 @@ class IdlParser(Parser, Configurable):
 
     def non_trivial_rule_return_value(self, value):
         if isinstance(value, tree.Sourced):
-            if value.loc is None or value.source is None:
+            if value.source_tokens is None:
                 start, end = self.stream.span()
-                whole_source = self.source[start:end]
+                value.all_source_tokens = self.source_tokens[start:end]
                 before = True
                 start_idl = 0
                 end_idl = 0
                 set_end_idl = False
-                for i, token in enumerate(whole_source):
+                for i, token in enumerate(value.all_source_tokens):
                     if token.is_idl():
                         if before:
                             if value.loc is None:
@@ -383,8 +383,7 @@ class IdlParser(Parser, Configurable):
                     elif set_end_idl:
                         end_idl = i
                         set_end_idl = False
-                if value.source is None:
-                    value.source = whole_source[start_idl:end_idl]
+                value.source_tokens = value.all_source_tokens[start_idl:end_idl]
         elif is_sequence(value):
             for v in value:
                 self.non_trivial_rule_return_value(v)
@@ -533,7 +532,7 @@ class IdlParser(Parser, Configurable):
             t = self.stream.peek()[0]
             if t.kind is TokenKind.at:
                 anno = self.m_annotation_appl()
-                result = Token(t.loc, ''.join([str(t) for t in anno.source]),
+                result = Token(t.loc, ''.join([str(t) for t in anno.source_tokens]),
                     TokenKind.preparsed_annotation, value=anno)
             else:
                 result = t
@@ -1140,9 +1139,9 @@ class IdlParser(Parser, Configurable):
                 if handle == handle.warn_once and \
                         anno.name in self.unsupported_annotations_seen_ignored:
                     continue
-                anno.loc._length = sum([len(t.text) - t.text.count('\n') for t in anno.source])
+                anno.loc._length = sum([len(t.text) - t.text.count('\n') for t in anno.source_tokens])
                 what = (anno.loc, 'Unsupported annotation')
-                lines = self.source_lines.get_lines_for_tokens(anno.source)
+                lines = self.source_lines.get_lines_for_tokens(anno.source_tokens)
                 if handle == handle.error:
                     self.log_error(what, lines)
                 else:

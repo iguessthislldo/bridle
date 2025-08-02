@@ -1,5 +1,5 @@
 from .parser import IdlParser, UnsupportedAnnotations
-from .tokenizer import IdlTokenizer
+from .tokenizer import IdlTokenizer, TokenKind
 from .idl_file import IdlFile
 
 __all__ = [
@@ -7,4 +7,5 @@ __all__ = [
     'UnsupportedAnnotations',
     'IdlTokenizer',
     'IdlFile',
+    'TokenKind',
 ]

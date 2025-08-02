@@ -1,0 +1,60 @@
+module Cdrf {
+
+#if defined __OPENDDS_IDL || defined __TAO_IDL
+typedef char PropertyType;
+const char BoolType = 'b';
+const char IntType = 'i';
+const char UintType = 'u';
+const char StringType = 's';
+const char OctetSeqType = 'o';
+#else
+@bit_bound(8)
+enum PropertyType {
+    @value('b') BoolType,
+    @value('i') IntType,
+    @value('u') UintType,
+    @value('s') StringType,
+    @value('o') OctetSeqType
+};
+#endif
+
+@final
+union PropertyValue switch (PropertyType) {
+case BoolType:
+    boolean bool_value;
+case IntType:
+    int32 int_value;
+case UintType:
+    uint32 uint_value;
+case StringType:
+    string string_value;
+case OctetSeqType:
+    sequence<octet> octet_seq_value;
+};
+
+@final
+struct Property {
+    string name;
+    PropertyValue value;
+};
+
+@appendable
+struct Header {
+    uint8 version;
+    boolean rtps_encapsulation;
+    @key string type_name;
+    // Properties could include:
+    //   "idl" -> IDL for the type in StringType
+    //   "typeobject" -> RTPS Encapsulated XCDR 2 encoded XTypes 1.2+ TypeObject in OctetSeqType
+    sequence<Property> properties;
+};
+
+@topic
+@final
+struct File {
+    @value("CDRF") char magic[4];
+    @key Header header;
+    sequence<octet> data;
+};
+
+};
