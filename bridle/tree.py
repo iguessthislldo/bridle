@@ -267,13 +267,43 @@ class Node(Sourced):
         modules nodes that are the same namespace are merged and checks for
         redefinition errors happen.
         '''
-        raise NotImplementedError
+        raise NotImplementedError(repr(type(self)))
 
     def trim_phase(self):
         '''\
         Trim nodes that are not needed anymore
         '''
-        raise NotImplementedError
+        raise NotImplementedError(repr(type(self)))
+
+    def resolve_type_ref(self, value):
+        if isinstance(value, ScopedNameRef):
+            got = self.parent.get(value)
+            if not isinstance(got, TypeNode):
+                raise ValueError('{} is not a type!'.format(value))
+            value = got
+        return value
+
+    def resolve_const_ref(self, value):
+        if isinstance(value, ScopedNameRef):
+            got = self.parent.get(value)
+            if not isinstance(got, ConstantNode):
+                raise ValueError('{} is not a constant value!'.format(value))
+            return got
+        return None
+
+    def name_resolution_phase(self):
+        '''\
+        Replace ScopedNameRefs with the actual object if they exist or error if
+        they don't.
+        See 7.5.2 for "Scoping Rules and Name Resolution"
+        '''
+        raise NotImplementedError(repr(type(self)))
+
+    def eval_phase(self):
+        '''\
+        Evaluate any remaining unevaluating expressions.
+        '''
+        raise NotImplementedError(repr(type(self)))
 
     # Only Usable After Semantic Phases ---------------------------------------
 
@@ -306,6 +336,16 @@ class Node(Sourced):
         print('  ' * level, self.short_repr(), sep='')
 
 
+class TypeNode(Node):
+
+    def actual_type(self):
+        return self
+
+
+def typename(obj):
+    return type(obj).__name__
+
+
 class ContainerNode(Node):
 
     def __init__(self, name=None, parent=None, loc=None):
@@ -313,24 +353,31 @@ class ContainerNode(Node):
         self.children = []
         self.children_dict = None
         self.trimmed = False
+        self.called_eval_phase = False
+
+    def child_must_be(self, child, *types):
+        if not isinstance(child, types):
+            raise TypeError('Child of {} is {}, must be one of {}'.format(
+                repr(self), typename(child), ', '.join([t.__name__ for t in types])))
+
+    def check_child(self, child):
+        raise NotImplementedError
 
     def add_child(self, child):
         if is_sequence(child):
-            self.add_children(child)
-        else:
-            self.children.append(child)
-            if self.tree is not None:
-                child.set_tree(self.tree, self.scoped_name)
-            if self.children_dict is not None:
-                self.emplace_nodes([child])
+            raise TypeError('{} is a sequence!'.format(repr(child)))
+        self.check_child(child)
+        self.children.append(child)
+        if self.tree is not None:
+            child.set_tree(self.tree, self.scoped_name)
+        if self.children_dict is not None:
+            self.emplace_nodes([child])
 
     def add_children(self, children):
-        self.children.extend(children)
-        if self.tree is not None:
-            for child in children:
-                child.set_tree(self.tree, self.scoped_name)
-        if self.children_dict is not None:
-            self.emplace_nodes(children)
+        if not is_sequence(children):
+            raise TypeError('{} is NOT a sequence!'.format(repr(children)))
+        for child in children:
+            self.add_child(child)
 
     def set_tree(self, tree, parent_scoped_name):
         super().set_tree(tree, parent_scoped_name)
@@ -379,17 +426,22 @@ class ContainerNode(Node):
         self.children = new_children
         self.trimmed = True
 
-    def get(self, scoped_name):
+    def get(self, scoped_name, look_in_parent=True):
         if isinstance(scoped_name, str):
             scoped_name = ScopedName.from_idl(scoped_name)
-        node = self.children_dict[scoped_name.parts[0]]
+        local = scoped_name.parts[0]
+        if local not in self.children_dict:
+            if look_in_parent and self.parent is not None:
+                return self.parent.get(scoped_name)
+            raise ValueError('{} not in {}'.format(scoped_name, self))
+        node = self.children_dict[local]
         if len(scoped_name.parts) == 1:
             return node
         get_scoped_name = ScopedName(scoped_name.parts[1:], absolute=False)
         if not isinstance(node, ContainerNode):
             raise InternalError('{} can\'t have any children like {}',
                 node.scoped_name, get_scoped_name)
-        return node.get(get_scoped_name)
+        return node.get(get_scoped_name, False)
 
     def __getitem__(self, scoped_name):
         return self.get(scoped_name)
@@ -412,6 +464,16 @@ class ContainerNode(Node):
     def trim_phase(self):
         self.trim_children()
 
+    def name_resolution_phase(self):
+        for child in self.children_dict.values():
+            child.name_resolution_phase()
+
+    def eval_phase(self):
+        if not self.called_eval_phase:
+            self.called_eval_phase = True
+            for child in self.children_dict.values():
+                child.eval_phase()
+
     def accept(self, visitor):
         for child in self.children:
             child.accept(visitor)
@@ -423,7 +485,7 @@ class ContainerNode(Node):
             child.dump(level)
 
 
-class ForwardDclNode(Node):
+class ForwardDclNode(TypeNode):
 
     def __init__(self, forward_dcl):
         self.forward_dcl = forward_dcl
@@ -444,6 +506,9 @@ class ModuleNode(ContainerNode):
             return Action.trim_new
         else:
             return super.handle_possible_redefinition(new_node)
+
+    def check_child(self, child):
+        self.child_must_be(child, TypeNode, ConstantNode, ModuleNode)
 
 
 class Tree(ModuleNode):
@@ -478,17 +543,22 @@ class Tree(ModuleNode):
             raise ErrorsReported('Semantic errors were found')
 
         self.trim_phase()
+        self.name_resolution_phase()
+        self.eval_phase()
 
     def _repr(self, short):
         return self.repr_template('{}', self.loc, short=short)
 
 
-class PrimitiveNode(Node):
+class PrimitiveNode(TypeNode):
 
     def __init__(self, kind):
         super().__init__()
         self.kind = PrimitiveKind(kind)
         self.element_count_limit = None
+
+    def eval_phase(self):
+        pass
 
     def accept(self, visitor):
         pass
@@ -549,12 +619,21 @@ class FieldNode(Node):
     def _repr(self, short):
         return self.repr_template(repr(self.type_node), short=short)
 
+    def name_resolution_phase(self):
+        self.type_node = self.resolve_type_ref(self.type_node)
+
+    def eval_phase(self):
+        self.type_node.eval_phase()
+
 
 class StructNode(ContainerNode, ForwardDclNode):
 
     def __init__(self, name, forward_dcl=False):
         ContainerNode.__init__(self, name)
         ForwardDclNode.__init__(self, forward_dcl)
+
+    def check_child(self, child):
+        self.child_must_be(child, FieldNode)  # TODO Check
 
     def accept(self, visitor):
         visitor.visit_struct(self)
@@ -572,29 +651,51 @@ class UnknownAnnotationNode(Node):
 
 
 class EnumeratorNode(Node):
-    pass
+
+    def __init__(self, name, value=None, parent=None, loc=None):
+        super().__init__(name, parent, loc)
+        self.value = None
+
+    def name_resolution_phase(self):
+        # TODO
+        pass
+
+    def eval_phase(self):
+        # TODO
+        pass
 
 
-class EnumNode(ContainerNode):
+class EnumNode(ContainerNode, TypeNode):
 
-    def __init__(self, size=None):
+    def __init__(self, bit_bound=32):
         super().__init__()
-        self.size = size
+        self.bit_count = bit_bound
         self.default_member = None
+
+    def check_child(self, child):
+        self.child_must_be(child, EnumeratorNode)  # TODO Check
 
     def accept(self, visitor):
         visitor.visit_enum(self)
 
     def _repr(self, short):
-        return self.repr_template('{} bits', self.size, short=short)
+        return self.repr_template('{} bits', self.bit_bound, short=short)
 
 
-class ArrayNode(Node):
+class ArrayNode(TypeNode):
 
     def __init__(self, base_type, dimensions):
         super().__init__()
         self.base_type = base_type
         self.dimensions = dimensions
+
+    def name_resolution_phase(self):
+        self.base_type = self.resolve_type_ref(self.base_type)
+        # TODO: dimensions
+
+    def eval_phase(self):
+        # TODO: dimensions
+        pass
 
     def accept(self, visitor):
         visitor.visit_array(self)
@@ -605,12 +706,20 @@ class ArrayNode(Node):
             short=short)
 
 
-class SequenceNode(Node):
+class SequenceNode(TypeNode):
 
     def __init__(self, base_type, max_count):
         super().__init__()
         self.base_type = base_type
         self.max_count = max_count
+
+    def name_resolution_phase(self):
+        self.base_type = self.resolve_type_ref(self.base_type)
+        # TODO: max_count
+
+    def eval_phase(self):
+        # TODO: max_count
+        pass
 
     def accept(self, visitor):
         visitor.visit_sequence(self)
@@ -620,19 +729,52 @@ class SequenceNode(Node):
             "max " + str(self.max_count) if self.max_count else "no max", short=short)
 
 
+class ConstantRefNode(ScopedNameRef, ConstAbc):
+
+    def __init__(self, scoped_name_ref):
+        ScopedNameRef.__init__(self,
+            scoped_name_ref.loc, scoped_name_ref.parts, scoped_name_ref.absolute)
+        Node.__init__(self)
+        self.constant_node = None
+
+    def uncasted_kind(self):
+        if self.constant_node is not None:
+            self.constant_node.uncasted_kind()
+
+    def resolve_refs(self, callback):
+        if not self.can_eval():
+            self.constant_node = callback(self)
+            print(self.parts, self.constant_node)
+
+    def can_eval(self):
+        if self.constant_node is not None:
+            return self.constant_node.can_eval()
+        return False
+
+    def eval(self, to: PrimitiveKind):
+        if self.constant_node is not None:
+            return self.constant_node.eval(to)
+
+    def __str__(self):
+        return ScopedNameRef.__str__(self)
+
+    def __repr__(self):
+        return ScopedNameRef.__repr__(self)
+
+
 class ConstantNode(Node, ConstAbc):
 
-    def __init__(self, primitive_node):
+    def __init__(self, type_node):
         super().__init__()
-        self.primitive_node = primitive_node
+        self.type_node = type_node
         self._value = None
         self._raw_value = None
 
     def uncasted_kind(self):
-        # TODO
-        if isinstance(self.primitive_node, ScopedName):
+        if self._value is None and (isinstance(self._raw_value, ScopedName) or
+                isinstance(self.type_node, ScopedName)):
             return None
-        return self.primitive_node.kind
+        return self.type_node.actual_type().kind
 
     @property
     def value(self):
@@ -660,6 +802,17 @@ class ConstantNode(Node, ConstAbc):
             self._value = self._raw_value.eval(to)
         return self._value
 
+    def resolve_refs(self, callback):
+        return self._raw_value.resolve_refs(callback)
+
+    def name_resolution_phase(self):
+        self.type_node = self.resolve_type_ref(self.type_node)
+        if self._value is None:
+            self.resolve_refs(self.resolve_const_ref)
+
+    def eval_phase(self):
+        self._value = self.eval(self.uncasted_kind())
+
     def accept(self, visitor):
         visitor.visit_constant(self)
 
@@ -668,7 +821,7 @@ class ConstantNode(Node, ConstAbc):
 
     def _repr(self, short):
         return self.repr_template(
-            '{} = {}', repr(self.primitive_node), repr(self.value), short=short)
+            '{} = {}', repr(self.type_node), repr(self.value), short=short)
 
 
 class UnionBranchNode(FieldNode):
@@ -686,6 +839,9 @@ class UnionNode(ContainerNode, ForwardDclNode):
         ForwardDclNode.__init__(self, forward_dcl)
         self.disc_type = None
 
+    def check_child(self, child):
+        self.child_must_be(child, UnionBranchNode)  # TODO Check
+
     def accept(self, visitor):
         visitor.visit_union(self)
 
@@ -693,11 +849,20 @@ class UnionNode(ContainerNode, ForwardDclNode):
         return self.repr_template('{}', repr(self.disc_type), short=short)
 
 
-class TypedefNode(Node):
+class TypedefNode(TypeNode):
 
     def __init__(self, name, base_type):
         super().__init__(name)
         self.base_type = base_type
+
+    def actual_type(self):
+        return self.base_type.actual_type()
+
+    def name_resolution_phase(self):
+        self.base_type = self.resolve_type_ref(self.base_type)
+
+    def eval_phase(self):
+        self.base_type.eval_phase()
 
     def accept(self, visitor):
         visitor.visit_typedef(self)
@@ -706,18 +871,53 @@ class TypedefNode(Node):
         return self.repr_template('{}', repr(self.base_type), short=short)
 
 
-class BitValueNode(Node):
+class BitsetFieldNode(Node):
+    # 7.4.13.4.3.2
+    # TODO: Incomplete
 
     def __init__(self, name, position=None):
         super().__init__(name)
         self.position = position
 
 
-class BitMaskNode(ContainerNode):
+class BitsetNode(ContainerNode, TypeNode):
+    # 7.4.13.4.3.2
+    # TODO: Incomplete
+
+    def __init__(self, name):
+        super().__init__(name)
+
+    def check_child(self, child):
+        self.child_must_be(child, BitsetFieldNode)  # TODO Check
+
+
+class BitmaskValueNode(Node):
+    # 7.4.13.4.3.3
+    # TODO: Incomplete
+
+    def __init__(self, name, position=None):
+        super().__init__(name)
+        self.position = position
+
+    def name_resolution_phase(self):
+        # TODO
+        pass
+
+    def eval_phase(self):
+        # TODO
+        pass
+
+
+class BitmaskNode(ContainerNode, TypeNode):
+    # 7.4.13.4.3.3
+    # TODO: Incomplete
 
     def __init__(self, name, bit_bound=None):
         super().__init__(name)
         self.bit_bound = bit_bound
+
+    def check_child(self, child):
+        self.child_must_be(child, BitmaskValueNode)  # TODO Check
 
 
 class ParameterAttr(enum.Enum):
@@ -737,12 +937,27 @@ class ParameterNode(Node):
     def _repr(self, short):
         return self.repr_template('{} {}', self.attr.name, repr(self.type), short=short)
 
+    def name_resolution_phase(self):
+        self.type = self.resolve_type_ref(self.type)
+        # TODO: raises
+
+    def eval_phase(self):
+        # TODO
+        pass
+
 
 class OpNode(ContainerNode):
 
     def __init__(self, name, return_type):
         super().__init__(name)
         self.return_type = return_type
+
+    def check_child(self, child):
+        self.child_must_be(child, ParameterNode)  # TODO Check
+
+    def name_resolution_phase(self):
+        self.return_type = self.resolve_type_ref(self.return_type)
+        super().name_resolution_phase()
 
 
 class InterfaceNode(ContainerNode, ForwardDclNode):
@@ -754,6 +969,9 @@ class InterfaceNode(ContainerNode, ForwardDclNode):
 
     def accept(self, visitor):
         visitor.visit_interface(self)
+
+    def check_child(self, child):
+        self.child_must_be(child, OpNode)  # TODO Check
 
 
 class NodeVisitor:

@@ -1,3 +1,6 @@
+@unknown_annotation(
+  something
+)
 module invalid {
 
 const long x == 1;

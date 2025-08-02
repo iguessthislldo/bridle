@@ -67,17 +67,22 @@ def get_idl_parser(parsed_args, **override_values):
 
 def type_files_to_trees(parsed_args, **override_values):
     idl_parser = get_idl_parser(parsed_args, **override_values)
-    trees = []
+    idl_files = []
+    itl_files = []
     for type_file in parsed_args.type_files:
         if type_file.suffix == '.idl':
-            try:
-                trees.append(idl_parser.parse([type_file])[0])
-            except ErrorsReported as e:
-                error_exit(str(e))
+            idl_files.append(type_file)
         elif type_file.suffix == '.itl':
-            trees.append(parse_itl_files([type_file]))
+            itl_files.append(type_file)
         else:
             error_exit("Don't know what kind of file {} is".format(repr(type_file)))
+    trees = []
+    try:
+        trees.extend(idl_parser.parse(idl_files))
+    except ErrorsReported as e:
+        error_exit(str(e))
     if idl_parser.error_count:
         error_exit('{} errors found'.format(idl_parser.error_count))
+    if itl_files:
+        trees.append(parse_itl_files(itl_files))
     return trees

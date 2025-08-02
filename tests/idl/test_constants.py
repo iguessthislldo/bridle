@@ -15,11 +15,11 @@ class ConstantsTests(unittest.TestCase):
     def check(self, tree, name, value, primitive_kind, limit=None):
         node = tree.get(name)
         self.assertIsInstance(node, ConstantNode)
-        self.assertIsInstance(node.primitive_node, PrimitiveNode)
-        self.assertEqual(node.primitive_node.kind, primitive_kind)
-        self.assertEqual(node.primitive_node.element_count_limit, limit)
+        self.assertIsInstance(node.type_node, PrimitiveNode)
+        self.assertEqual(node.type_node.kind, primitive_kind)
+        self.assertEqual(node.type_node.element_count_limit, limit)
         self.assertTrue(node.can_eval())
-        self.assertEqual(node.eval(node.primitive_node.kind), value)
+        self.assertEqual(node.eval(node.type_node.kind), value)
 
     def h(self, idl, **values):
         tree = idl_parser.parse(direct_inputs=[idl])[0]
@@ -106,11 +106,13 @@ class ConstantsTests(unittest.TestCase):
             expr3=3,
         )
 
-    # TODO
-    @unittest.expectedFailure
     def test_const_expr_references(self):
-        idl_parser.parse(direct_inputs=['''\
-            const short const1 = 0;
-            /*@bridle::assert_value(0)*/
-            const short const2 = const1;
-            '''])
+        self.h('''\
+            const short const1 = 1;
+            const short const2 = const1 + 1;
+            const short const3 = const1 + const2 + 1;
+            ''',
+            const1=1,
+            const2=2,
+            const3=4,
+        )

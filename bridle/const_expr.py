@@ -18,6 +18,10 @@ class ConstAbc(ABC):
         return None
 
     @abstractmethod
+    def resolve_refs(self, callback):
+        pass
+
+    @abstractmethod
     def can_eval(self):
         pass
 
@@ -43,8 +47,11 @@ class ConstValue(ConstAbc):
     def uncasted_kind(self):
         return self.kind
 
+    def resolve_refs(self, callback):
+        pass
+
     def can_eval(self):
-        return self.value is not None
+        return self.value is not None and self.kind is not None
 
     def eval(self, to: 'PrimitiveKind') -> Any:
         if to != self.kind:
@@ -142,6 +149,10 @@ class ConstExpr(ConstAbc):
                 op.name, expected_count, len(operands))
         self.op = op
         self.operands = operands
+
+    def resolve_refs(self, callback):
+        for operand in self.operands:
+            operand.resolve_refs(callback)
 
     def can_eval(self):
         for operand in self.operands:

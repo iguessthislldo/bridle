@@ -706,7 +706,7 @@ class IdlParser(Parser, Configurable):
             'priority',
         ))
         if isinstance(rv, tree.ScopedName):
-            rv = ConstValue(rv, None)
+            rv = tree.ConstantRefNode(rv)
         return rv
 
     @nontrivial_rule
@@ -942,7 +942,7 @@ class IdlParser(Parser, Configurable):
         return [self.m_type_spec(), self.m_declarator()]
 
     def m_enumerator(self):
-        return tree.EnumeratorNode(self.m_identifier())
+        return tree.EnumeratorNode(name=self.m_identifier())
 
     class Rule_enum_dcl(LeadingTokenRule):
         def __init__(self, parser_inst, name):
@@ -1152,6 +1152,8 @@ class IdlParser(Parser, Configurable):
 
     # Building Block Extended Data-Types ======================================
 
+    # TODO: bitset
+
     class Rule_bitmask_dcl(LeadingTokenRule):
         def __init__(self, parser_inst, name):
             super().__init__(parser_inst, name, 'bitmask', TokenKind.BITMASK, trivial=False)
@@ -1160,7 +1162,7 @@ class IdlParser(Parser, Configurable):
             parser = self.parser_inst
             # TODO: at this point we can't get annotation from before the bitmask keyword
             # bit_bound = parser.get_annotation_by_name('bit_bound')
-            rv = tree.BitMaskNode(parser.m_identifier(), 16)
+            rv = tree.BitmaskNode(parser.m_identifier(), 16)
             parser.m_begin_scope()
             rv.add_children(parser.comma_list_of('bit_value', parser.end_scope))
             parser.m_end_scope()
@@ -1169,4 +1171,4 @@ class IdlParser(Parser, Configurable):
     @nontrivial_rule
     def m_bit_value(self):
         position = self.get_annotation_by_name('position')
-        return tree.BitValueNode(self.m_identifier(), position)
+        return tree.BitmaskValueNode(self.m_identifier(), position)

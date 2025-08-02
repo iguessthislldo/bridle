@@ -3,7 +3,7 @@ import unittest
 from bridle.utils.configurable import Configurable
 
 
-class TestObject(Configurable):
+class ConfigObj(Configurable):
     @classmethod
     def define_config_options(cls, options):
         options.add_options(dict(a=1, b=3))
@@ -17,16 +17,16 @@ class ParentObject(Configurable):
     def define_config_options(cls, options):
         options.add_option('a', 11)
         options.add_option('b', 13)
-        options.add_child_options('child_', TestObject)
+        options.add_child_options('child_', ConfigObj)
 
     def __init__(self, **config):
         super().__init__(config)
-        self.child = TestObject(config_parent=('child_', self))
+        self.child = ConfigObj(config_parent=('child_', self))
 
 
 class TestConfigurable(unittest.TestCase):
     def test_config(self):
-        o = TestObject(b=3)
+        o = ConfigObj(b=3)
         self.assertEqual(o.config['a'], 1)
         self.assertEqual(o.config['b'], 3)
         o.config.push(dict(a=2))
@@ -48,7 +48,7 @@ class TestConfigurable(unittest.TestCase):
         self.assertEqual(o.config['b'], 3)
 
     def test_config_set(self):
-        o = TestObject()
+        o = ConfigObj()
         self.assertEqual(o.config['a'], 1)
         self.assertEqual(o.config['b'], 3)
 
@@ -77,9 +77,9 @@ class TestConfigurable(unittest.TestCase):
 
     def test_config_no_key(self):
         with self.assertRaises(KeyError):
-            TestObject(fake_is_not_real=2)
+            ConfigObj(fake_is_not_real=2)
 
-        o = TestObject(b=2)
+        o = ConfigObj(b=2)
         with self.assertRaises(KeyError):
             o.config.push(dict(fake_is_not_real=2))
 
